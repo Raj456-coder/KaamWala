@@ -1,0 +1,29 @@
+rules_version = "2";
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /workers/{workerId}/{allPaths=**} {
+      allow read: if request.auth != null && (request.auth.uid == workerId || get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == "admin");
+      allow write: if request.auth != null && request.auth.uid == workerId;
+    }
+
+    match /profile-images/{userId}/{allPaths=**} {
+      allow read: if true;
+      allow write: if request.auth != null && request.auth.uid == userId;
+    }
+
+    match /advertisers/{advertiserId}/{allPaths=**} {
+      allow read: if true;
+      allow write: if request.auth != null && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == "admin";
+    }
+
+    match /public/{allPaths=**} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    match /{allPaths=**} {
+      allow read: if false;
+      allow write: if false;
+    }
+  }
+}

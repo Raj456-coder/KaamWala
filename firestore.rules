@@ -1,0 +1,139 @@
+rules_version = "2";
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId: string) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == "admin";
+    }
+
+    // Users: a user can read/write only their own user document; admin can read all
+    match /users/{userId} {
+      allow read: if isOwner(userId) || isAdmin();
+      allow create: if isOwner(userId);
+      allow update, delete: if isOwner(userId) || isAdmin();
+    }
+
+    // Customers: same as users
+    match /customers/{customerId} {
+      allow read: if isOwner(customerId) || isAdmin();
+      allow create: if isOwner(customerId);
+      allow update, delete: if isOwner(customerId) || isAdmin();
+    }
+
+    // Workers: public read, owner write, admin write
+    match /workers/{workerId} {
+      allow read: if true;
+      allow create: if isOwner(workerId);
+      allow update: if isOwner(workerId) || isAdmin();
+      allow delete: if isOwner(workerId) || isAdmin();
+    }
+
+    // Worker Verifications: admin can read/write; worker can read own
+    match /workerVerifications/{verificationId} {
+      allow read: if isAdmin() || resource.data.workerId == request.auth.uid;
+      allow create: if isAuthenticated() && request.resource.data.workerId == request.auth.uid;
+      allow update, delete: if isAdmin();
+    }
+
+    // Audit Logs: admin can read/write; no client access
+    match /auditLogs/{logId} {
+      allow read: if isAdmin();
+      allow create: if isAdmin();
+      allow update, delete: if false;
+    }
+
+    // Bookings: customer reads/writes their own; worker reads/writes their own; admin reads all
+    match /bookings/{bookingId} {
+      allow read: if isAuthenticated() && (resource.data.customerId == request.auth.uid || resource.data.workerId == request.auth.uid || isAdmin());
+      allow create: if isAuthenticated() && request.resource.data.customerId == request.auth.uid;
+      allow update, delete: if isAuthenticated() && (resource.data.customerId == request.auth.uid || resource.data.workerId == request.auth.uid || isAdmin());
+    }
+
+    // Reviews: anyone can read; customer can create; only the reviewer can update/delete; admin can delete
+    match /reviews/{reviewId} {
+      allow read: if true;
+      allow create: if isAuthenticated() && request.resource.data.customerId == request.auth.uid;
+      allow update, delete: if isAuthenticated() && (resource.data.customerId == request.auth.uid || isAdmin());
+    }
+
+    // Categories: public read, admin only write
+    match /categories/{categoryId} {
+      allow read: if true;
+      allow create, update, delete: if isAdmin();
+    }
+
+    // Cities: public read, admin only write
+    match /cities/{cityId} {
+      allow read: if true;
+      allow create, update, delete: if isAdmin();
+    }
+
+    // Payments: customer and worker can read their own; admin can read all
+    match /payments/{paymentId} {
+      allow read: if isAuthenticated() && (resource.data.customerId == request.auth.uid || resource.data.workerId == request.auth.uid || isAdmin());
+      allow create: if isAuthenticated() && request.resource.data.customerId == request.auth.uid;
+      allow update, delete: if isAdmin();
+    }
+
+    // Notifications: user can read/write their own
+    match /notifications/{notificationId} {
+      allow read: if isOwner(resource.data.recipientId);
+      allow create: if isAuthenticated() && request.resource.data.recipientId == request.auth.uid;
+      allow update, delete: if isOwner(resource.data.recipientId);
+    }
+
+    // Storage: users can read/write their own files
+    match /storage/files/{userId}/{allPaths=**} {
+      allow read, write: if isOwner(userId);
+    }
+
+    // Subscriptions: user reads own; admin reads all; admin manages
+    match /subscriptions/{subscriptionId} {
+      allow read: if isOwner(resource.data.userId) || isAdmin();
+      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
+      allow update, delete: if isAdmin();
+    }
+
+    // Memberships: user reads own; admin reads all; admin manages
+    match /memberships/{membershipId} {
+      allow read: if isOwner(resource.data.userId) || isAdmin();
+      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
+      allow update, delete: if isAdmin();
+    }
+
+    // Contact Unlocks: customer/worker read own; admin reads all; admin manages
+    match /contactUnlocks/{unlockId} {
+      allow read: if isAuthenticated() && (resource.data.customerId == request.auth.uid || resource.data.workerId == request.auth.uid || isAdmin());
+      allow create: if isAuthenticated() && request.resource.data.customerId == request.auth.uid;
+      allow update, delete: if isAdmin();
+    }
+
+    // Advertisers: creator reads own; admin reads all; admin manages
+    match /advertisers/{advertiserId} {
+      allow read: if isOwner(resource.data.createdBy) || isAdmin();
+      allow create: if isAuthenticated() && request.resource.data.createdBy == request.auth.uid;
+      allow update, delete: if isAdmin();
+    }
+
+    // Transactions: user reads own; admin reads all; no client write
+    match /transactions/{transactionId} {
+      allow read: if isOwner(resource.data.userId) || isAdmin();
+      allow create, update, delete: if isAdmin();
+    }
+
+    // Support Requests: customer can create; customer/admin can read own; admin can update
+    match /supportRequests/{requestId} {
+      allow read: if isOwner(resource.data.customerId) || isAdmin();
+      allow create: if isAuthenticated() && request.resource.data.customerId == request.auth.uid;
+      allow update, delete: if isAdmin();
+    }
+  }
+}
