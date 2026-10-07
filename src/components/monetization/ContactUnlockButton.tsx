@@ -1,16 +1,13 @@
 "use client";
 
-import { useState } from "react";
 import { motion } from "framer-motion";
 import Button from "@/components/ui/Button";
-import Badge from "@/components/ui/Badge";
 import { Lock, Phone, CheckCircle2, Loader2 } from "lucide-react";
 import { ContactUnlockWithId } from "@/types/monetization";
-import { cn } from "@/lib/utils";
 import { formatCurrency } from "@/lib/utils";
 
 interface ContactUnlockButtonProps {
-  workerId: string;
+  workerId?: string;
   workerName: string;
   phoneNumber?: string;
   unlock?: ContactUnlockWithId | null;
@@ -19,7 +16,6 @@ interface ContactUnlockButtonProps {
 }
 
 export default function ContactUnlockButton({
-  workerId,
   workerName,
   phoneNumber,
   unlock,

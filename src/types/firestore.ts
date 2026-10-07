@@ -46,7 +46,7 @@ export interface AuditLogDoc {
   id: string;
   adminId: string;
   action: string;
-  targetType: "worker" | "advertiser" | "booking" | "user" | "system";
+  targetType: "worker" | "advertiser" | "booking" | "user" | "system" | "subscription" | "membership" | "contact_unlock";
   targetId: string;
   reason?: string;
   createdAt: Date;

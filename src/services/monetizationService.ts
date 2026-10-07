@@ -24,12 +24,9 @@ import {
   TransactionWithId,
   SubscriptionPlanId,
   MembershipPlanId,
-  AdPlanId,
   SubscriptionStatus,
   MembershipStatus,
   AdvertiserStatus,
-  TransactionStatus,
-  TransactionType,
   RevenueStats,
   MonthlyRevenue,
   ContactUnlockStatus,
@@ -46,11 +43,11 @@ import {
   ADVERTISING_PLANS,
   CONTACT_UNLOCK_PRICE,
   CONTACT_UNLOCK_CURRENCY,
+  CUSTOMER_FREE_CONTACT_UNLOCKS,
   PLAN_DURATIONS,
   DEFAULT_WORKER_PLAN,
   DEFAULT_CUSTOMER_PLAN,
   DEFAULT_ADVERTISER_PLAN,
-  LAUNCH_MODE,
   WORKER_TRIAL_DAYS,
 } from "@/lib/launchConfig";
 
@@ -294,47 +291,101 @@ export async function getCustomerFreeContactCount(customerId: string): Promise<{
       where("status", "==", "success")
     );
     const snapshot = await getDocs(q);
-    return { count: snapshot.size, error: null };
+    const count = Math.min(snapshot.size, CUSTOMER_FREE_CONTACT_UNLOCKS);
+    return { count, error: null };
   } catch (error: unknown) {
     const err = error as Error;
     return { count: 0, error: err.message || "Failed to fetch free contact count." };
   }
 }
 
-export async function createContactUnlockOrder(
+export async function getPendingContactUnlock(
   customerId: string,
-  workerId: string,
-  amount = CONTACT_UNLOCK_PRICE,
-  unlockType: ContactUnlockType = "paid"
-): Promise<{ orderId: string; error: string | null }> {
+  workerId: string
+): Promise<{ unlock: ContactUnlockWithId | null; error: string | null }> {
   if (!db) {
-    return { orderId: "", error: "Firestore is not available." };
+    return { unlock: null, error: "Firestore is not available." };
   }
 
   try {
-    const { unlock } = await getContactUnlock(customerId, workerId);
-    if (unlock) {
-      return { orderId: "", error: "Contact already unlocked." };
+    const q = query(
+      collection(db, "contactUnlocks"),
+      where("customerId", "==", customerId),
+      where("workerId", "==", workerId),
+      where("status", "in", ["pending", "failed"]),
+    );
+    const snapshot = await getDocs(q);
+    if (snapshot.empty) {
+      return { unlock: null, error: null };
     }
+    const docSnap = snapshot.docs[0];
+    const data = docSnap.data() as Omit<ContactUnlockDoc, "id">;
+    return { unlock: { id: docSnap.id, ...data }, error: null };
+  } catch (error: unknown) {
+    const err = error as Error;
+    return { unlock: null, error: err.message || "Failed to fetch existing unlock." };
+  }
+}
+
+export async function createContactUnlockOrder(
+  customerId: string,
+  workerId: string,
+  amount = CONTACT_UNLOCK_PRICE
+): Promise<{ orderId: string; unlockId: string; unlockType: ContactUnlockType; error: string | null }> {
+  if (!db) {
+    return { orderId: "", unlockId: "", unlockType: "paid", error: "Firestore is not available." };
+  }
+
+  try {
+    const [unlockResult, countResult, pendingResult] = await Promise.all([
+      getContactUnlock(customerId, workerId),
+      getCustomerFreeContactCount(customerId),
+      getPendingContactUnlock(customerId, workerId),
+    ]);
+
+    if (countResult.error) {
+      return { orderId: "", unlockId: "", unlockType: "paid", error: countResult.error };
+    }
+    if (unlockResult.error) {
+      return { orderId: "", unlockId: "", unlockType: "paid", error: unlockResult.error };
+    }
+    if (pendingResult.error) {
+      return { orderId: "", unlockId: "", unlockType: "paid", error: pendingResult.error };
+    }
+
+    // If already unlocked, return the existing active unlock record without consuming credits
+    if (unlockResult.unlock) {
+      return { orderId: unlockResult.unlock.id, unlockId: unlockResult.unlock.id, unlockType: unlockResult.unlock.unlockType, error: null };
+    }
+
+    if (pendingResult.unlock) {
+      return { orderId: pendingResult.unlock.id, unlockId: pendingResult.unlock.id, unlockType: "paid", error: null };
+    }
+
+    const remaining = Math.max(0, CUSTOMER_FREE_CONTACT_UNLOCKS - countResult.count);
+    const unlockType: ContactUnlockType = remaining > 0 ? "free" : "paid";
 
     const orderId = `unlock_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
     const docRef = doc(collection(db, "contactUnlocks"));
 
+    // Zero-leakage privacy: worker phone numbers are never handled or stored in client payloads.
+    // They are securely retrieved only via the authenticated API route after entitlement verification.
     const payload: ContactUnlockDoc = {
       customerId,
       workerId,
-      amount,
+      amount: unlockType === "free" ? 0 : (amount || CONTACT_UNLOCK_PRICE),
       currency: CONTACT_UNLOCK_CURRENCY,
       unlockType,
       status: unlockType === "free" ? "success" : "pending",
       createdAt: now(),
       updatedAt: now(),
+      ...(unlockType === "free" ? { unlockedAt: now() } : {}),
     };
 
     await setDoc(docRef, { ...sanitizeForFirestore(payload), orderId });
 
     if (unlockType === "free") {
-      await createTransaction({
+      const txResult = await createTransaction({
         transactionId: `txn_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
         userId: customerId,
         type: "customer_contact_unlock",
@@ -344,12 +395,70 @@ export async function createContactUnlockOrder(
         referenceId: docRef.id,
         orderId,
       });
+      if (txResult.error) {
+        console.error("[monetization] Free-unlock bookkeeping failed:", txResult.error);
+      }
     }
 
-    return { orderId: docRef.id, error: null };
+    return { orderId: docRef.id, unlockId: docRef.id, unlockType, error: null };
   } catch (error: unknown) {
     const err = error as Error;
-    return { orderId: "", error: err.message || "Failed to create unlock order." };
+    return { orderId: "", unlockId: "", unlockType: "paid", error: err.message || "Failed to create unlock order." };
+  }
+}
+
+export interface ContactUnlockApiResponse {
+  success: boolean;
+  phoneNumber?: string;
+  whatsappUrl?: string;
+  phone?: string;
+  callUrl?: string;
+  requiresPayment?: boolean;
+  amount?: number;
+  freeRemaining?: number;
+  error?: string;
+}
+
+export async function requestContactUnlockApi(workerId: string): Promise<ContactUnlockApiResponse> {
+  const { auth } = await import("@/lib/firebase");
+  if (!auth?.currentUser) {
+    return { success: false, error: "Please sign in to view contact details." };
+  }
+
+  try {
+    const idToken = await auth.currentUser.getIdToken();
+    const res = await fetch("/api/contact-unlock", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${idToken}`,
+      },
+      body: JSON.stringify({ workerId }),
+    });
+
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      return {
+        success: false,
+        error: data.error || `Request failed with status ${res.status}`,
+        requiresPayment: res.status === 402 || !!data.requiresPayment,
+        amount: data.amount,
+        freeRemaining: data.freeRemaining,
+      };
+    }
+
+    return {
+      success: true,
+      phoneNumber: data.phoneNumber,
+      whatsappUrl: data.whatsappUrl,
+      phone: data.phoneNumber,
+      callUrl: data.phoneNumber ? `tel:${data.phoneNumber}` : undefined,
+    };
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "Failed to connect to contact unlock service.",
+    };
   }
 }
 
@@ -566,6 +675,31 @@ export async function getAllMemberships(): Promise<{ memberships: MembershipWith
   } catch (error: unknown) {
     const err = error as Error;
     return { memberships: [], error: err.message || "Failed to fetch memberships." };
+  }
+}
+
+export async function getContactUnlocksByCustomerId(
+  customerId: string
+): Promise<{ unlocks: ContactUnlockWithId[]; error: string | null }> {
+  if (!db) {
+    return { unlocks: [], error: "Firestore is not available." };
+  }
+
+  try {
+    const q = query(
+      collection(db, "contactUnlocks"),
+      where("customerId", "==", customerId),
+      orderBy("createdAt", "desc")
+    );
+    const snapshot = await getDocs(q);
+    const unlocks = snapshot.docs.map((doc) => {
+      const data = doc.data() as Omit<ContactUnlockDoc, "id">;
+      return { id: doc.id, ...data };
+    });
+    return { unlocks, error: null };
+  } catch (error: unknown) {
+    const err = error as Error;
+    return { unlocks: [], error: err.message || "Failed to fetch contact unlocks." };
   }
 }
 
@@ -820,3 +954,152 @@ export function getTrialDaysRemaining(subscription: SubscriptionWithId | null | 
   const diff = endDate.getTime() - nowDate.getTime();
   return Math.max(0, Math.ceil(diff / (1000 * 60 * 60 * 24)));
 }
+
+export async function updateSubscriptionStatus(
+  id: string,
+  status: SubscriptionStatus,
+  adminNotes?: string
+): Promise<{ error: string | null }> {
+  if (!db) {
+    return { error: "Firestore is not available." };
+  }
+
+  try {
+    const docRef = doc(db, "subscriptions", id);
+    const snap = await getDoc(docRef);
+    if (!snap.exists()) {
+      return { error: "Subscription not found." };
+    }
+    const data = snap.data() as SubscriptionDoc;
+
+    const updateData: Partial<SubscriptionDoc> & { adminNotes?: string } = {
+      status,
+      updatedAt: now(),
+    };
+
+    if (adminNotes) {
+      updateData.adminNotes = adminNotes;
+    }
+
+    if (status === "active" && (!data.startDate || data.status !== "active")) {
+      updateData.startDate = now();
+      updateData.endDate = getEndDate(data.planId);
+    }
+
+    await updateDoc(docRef, sanitizeForFirestore(updateData));
+
+    void createNotification(
+      data.userId,
+      "subscription_updated",
+      "Subscription Status Updated",
+      `Your subscription is now ${status}.`,
+      id
+    );
+
+    return { error: null };
+  } catch (error: unknown) {
+    const err = error as Error;
+    return { error: err.message || "Failed to update subscription status." };
+  }
+}
+
+export async function updateMembershipStatus(
+  id: string,
+  status: MembershipStatus,
+  adminNotes?: string
+): Promise<{ error: string | null }> {
+  if (!db) {
+    return { error: "Firestore is not available." };
+  }
+
+  try {
+    const docRef = doc(db, "memberships", id);
+    const snap = await getDoc(docRef);
+    if (!snap.exists()) {
+      return { error: "Membership not found." };
+    }
+    const data = snap.data() as MembershipDoc;
+
+    const updateData: Partial<MembershipDoc> & { adminNotes?: string } = {
+      status,
+      updatedAt: now(),
+    };
+
+    if (adminNotes) {
+      updateData.adminNotes = adminNotes;
+    }
+
+    if (status === "active" && (!data.startDate || data.status !== "active")) {
+      updateData.startDate = now();
+      updateData.endDate = getEndDate(data.planId);
+    }
+
+    await updateDoc(docRef, sanitizeForFirestore(updateData));
+
+    void createNotification(
+      data.userId,
+      "membership_updated",
+      "Membership Status Updated",
+      `Your membership is now ${status}.`,
+      id
+    );
+
+    return { error: null };
+  } catch (error: unknown) {
+    const err = error as Error;
+    return { error: err.message || "Failed to update membership status." };
+  }
+}
+
+export async function updateContactUnlockStatus(
+  id: string,
+  status: ContactUnlockStatus
+): Promise<{ error: string | null }> {
+  if (!db) {
+    return { error: "Firestore is not available." };
+  }
+
+  try {
+    const docRef = doc(db, "contactUnlocks", id);
+    const snap = await getDoc(docRef);
+    if (!snap.exists()) {
+      return { error: "Contact unlock not found." };
+    }
+    const data = snap.data() as ContactUnlockDoc;
+
+    const updateData: Partial<ContactUnlockDoc> = {
+      status,
+      updatedAt: now(),
+    };
+
+    if (status === "success") {
+      updateData.unlockedAt = now();
+      if (!data.workerPhone && data.workerId) {
+        const workerSnap = await getDoc(doc(db, "workers", data.workerId));
+        if (workerSnap.exists()) {
+          const wData = workerSnap.data();
+          const phone = wData?.personalInfo?.phone || wData?.phone || null;
+          if (phone) updateData.workerPhone = phone;
+        }
+      }
+    }
+
+    await updateDoc(docRef, sanitizeForFirestore(updateData));
+
+    if (status === "success") {
+      void createNotification(
+        data.customerId,
+        "contact_unlocked",
+        "Contact Unlocked",
+        "Your contact unlock request has been approved.",
+        id
+      );
+    }
+
+    return { error: null };
+  } catch (error: unknown) {
+    const err = error as Error;
+    return { error: err.message || "Failed to update contact unlock status." };
+  }
+}
+

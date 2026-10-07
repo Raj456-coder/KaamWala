@@ -7,7 +7,7 @@ import Footer from "@/components/sections/Footer";
 import { motion } from "framer-motion";
 import Button from "@/components/ui/Button";
 import Badge from "@/components/ui/Badge";
-import { AlertCircle, ArrowLeft, Calendar, Clock, MapPin, DollarSign, User, Loader2 } from "lucide-react";
+import { AlertCircle, ArrowLeft, Calendar, Clock, MapPin, DollarSign, User } from "lucide-react";
 import { getBookingById, updateBookingStatus } from "@/services/bookingService";
 import { BookingDoc } from "@/types/firestore";
 import StatusTimeline from "@/components/booking/StatusTimeline";

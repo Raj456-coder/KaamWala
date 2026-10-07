@@ -11,7 +11,7 @@ import {
   limit,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
-import { WorkerDoc, WorkerVerificationDoc, AuditLogDoc, WorkerVerificationStatus } from "@/types/firestore";
+import { WorkerVerificationDoc, AuditLogDoc, WorkerVerificationStatus } from "@/types/firestore";
 import { sanitizeForFirestore } from "@/lib/utils";
 import { createNotification } from "./notificationService";
 

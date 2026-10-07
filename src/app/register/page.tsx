@@ -22,6 +22,7 @@ import Link from "next/link";
 import Button from "@/components/ui/Button";
 import { cn } from "@/lib/utils";
 import { registerUser } from "@/services/authService";
+import { getWorkerById } from "@/services/firestoreService";
 import { UserRole } from "@/types/firestore";
 
 export default function RegisterPage() {
@@ -93,7 +94,13 @@ export default function RegisterPage() {
 
     setIsLoading(true);
 
-    const { error: regError } = await registerUser(email, password, name, selectedRole, phone);
+    const { user: registeredUser, error: regError } = await registerUser(
+      email,
+      password,
+      name,
+      selectedRole,
+      phone
+    );
 
     if (regError) {
       setIsLoading(false);
@@ -102,8 +109,22 @@ export default function RegisterPage() {
       setIsLoading(false);
       setIsSubmitted(true);
 
-      setTimeout(() => {
+      setTimeout(async () => {
         if (selectedRole === "worker") {
+          if (registeredUser?.uid) {
+            try {
+              const { worker } = await getWorkerById(registeredUser.uid);
+              if (
+                worker?.professionalInfo?.profession ||
+                worker?.professionalInfo?.category
+              ) {
+                window.location.href = "/worker-dashboard";
+                return;
+              }
+            } catch (err) {
+              console.error("[Register] Error checking worker profile:", err);
+            }
+          }
           window.location.href = "/become-worker";
         } else {
           window.location.href = "/customer-dashboard";

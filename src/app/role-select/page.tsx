@@ -14,48 +14,111 @@ import {
   Star,
   ArrowRight,
   ShieldCheck,
+  AlertCircle,
+  Loader2,
 } from "lucide-react";
 import Link from "next/link";
 import Button from "@/components/ui/Button";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/useAuth";
-import { updateUserProfile } from "@/services/authService";
+import { updateUserProfile, getUserRole } from "@/services/authService";
 import { UserRole } from "@/types/firestore";
 
 type Role = "customer" | "worker" | null;
 
 export default function RoleSelectPage() {
-  const { user, loading } = useAuth();
+  const { user, loading, role, refreshRole } = useAuth();
   const [selectedRole, setSelectedRole] = useState<Role>(null);
+  const [isVerifyingRole, setIsVerifyingRole] = useState(true);
   const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!loading && !user) {
-      window.location.href = "/login";
-    }
-  }, [user, loading]);
+    let isMounted = true;
+
+    const verifyAndRedirect = async () => {
+      if (loading) return;
+
+      if (!user) {
+        window.location.href = "/login";
+        return;
+      }
+
+      if (role) {
+        const destination =
+          role === "worker"
+            ? "/worker-dashboard"
+            : role === "admin"
+            ? "/admin"
+            : "/customer-dashboard";
+        window.location.href = destination;
+        return;
+      }
+
+      try {
+        const fetchedRole = await getUserRole(user.uid);
+        if (!isMounted) return;
+
+        if (fetchedRole) {
+          await refreshRole();
+          const destination =
+            fetchedRole === "worker"
+              ? "/worker-dashboard"
+              : fetchedRole === "admin"
+              ? "/admin"
+              : "/customer-dashboard";
+          window.location.href = destination;
+          return;
+        }
+      } catch (err) {
+        console.error("[RoleSelect] Failed to verify role:", err);
+      }
+
+      if (isMounted) {
+        setIsVerifyingRole(false);
+      }
+    };
+
+    verifyAndRedirect();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [user, loading, role, refreshRole]);
 
   const handleContinue = useCallback(async () => {
     if (!selectedRole || !user) return;
     setIsLoading(true);
+    setError(null);
 
-    const role: UserRole = selectedRole;
-    const { error } = await updateUserProfile(user.uid, { role });
+    const targetRole: UserRole = selectedRole;
+    const { error: saveError } = await updateUserProfile(user.uid, { role: targetRole });
 
-    if (error) {
+    if (saveError) {
+      console.error("[RoleSelect] Failed to save role:", saveError);
+      setError(saveError.message || "Could not save your role. Please try again.");
       setIsLoading(false);
       return;
     }
 
-    setTimeout(() => {
-      setIsLoading(false);
-      if (role === "customer") {
-        window.location.href = "/customer-dashboard";
-      } else {
-        window.location.href = "/become-worker";
-      }
-    }, 1200);
-  }, [selectedRole, user]);
+    await refreshRole();
+
+    const destination = targetRole === "customer" ? "/customer-dashboard" : "/become-worker";
+    window.location.href = destination;
+  }, [selectedRole, user, refreshRole]);
+
+  if (loading || isVerifyingRole || (user && role)) {
+    return (
+      <main className="min-h-screen bg-surface flex items-center justify-center p-4">
+        <div className="flex flex-col items-center gap-4 text-center">
+          <Loader2 className="w-10 h-10 text-primary animate-spin" />
+          <p className="text-text-secondary text-sm font-medium">
+            Checking your profile and permissions...
+          </p>
+        </div>
+      </main>
+    );
+  }
 
   return (
     <main className="min-h-screen bg-surface">
@@ -315,6 +378,13 @@ export default function RoleSelectPage() {
                 </div>
               </motion.div>
             </div>
+
+            {error && (
+              <div className="mt-6 flex items-center gap-2 rounded-2xl bg-danger/10 border border-danger/20 text-danger px-4 py-3 text-sm">
+                <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                {error}
+              </div>
+            )}
 
             {/* Continue Button */}
             <div className="mt-8">

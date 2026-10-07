@@ -55,12 +55,12 @@ export const registerUser = async (
   role: UserRole,
   phone?: string,
   city?: string
-): Promise<{ user: User; error: AuthError | null }> => {
+): Promise<{ user: User | null; error: AuthError | null }> => {
   console.log("[Auth] registerUser called:", { email, name, role });
   if (!auth || !db) {
     console.error("[Auth] registerUser failed: auth or db is null");
     return {
-      user: null as unknown as User,
+      user: null,
       error: { code: "auth/unavailable", message: "Authentication service is not available." },
     };
   }
@@ -174,7 +174,7 @@ export const registerUser = async (
     
     if (err.code === "auth/email-already-in-use") {
       return {
-        user: null as unknown as User,
+        user: null,
         error: {
           code: err.code || "auth/email-already-in-use",
           message: friendlyMessage,
@@ -183,7 +183,7 @@ export const registerUser = async (
     }
     
     return {
-      user: null as unknown as User,
+      user: null,
       error: {
         code: err.code || "unknown",
         message: friendlyMessage,
@@ -312,15 +312,34 @@ export const resetPassword = async (
   }
 };
 
+export const getUserProfile = async (uid: string): Promise<FirestoreUser | null> => {
+  if (!db) return null;
+  try {
+    const userDoc = await getDoc(doc(db, "users", uid));
+    if (!userDoc.exists()) return null;
+    return userDoc.data() as FirestoreUser;
+  } catch (error) {
+    console.error("[Auth] getUserProfile error:", error);
+    return null;
+  }
+};
+
 export const getUserRole = async (uid: string): Promise<UserRole | null> => {
   if (!db) return null;
 
   try {
     const userDoc = await getDoc(doc(db, "users", uid));
-    if (!userDoc.exists()) return null;
-    const data = userDoc.data() as FirestoreUser;
-    return data.role || null;
-  } catch {
+    if (userDoc.exists()) {
+      const data = userDoc.data() as FirestoreUser;
+      if (data.role) return data.role;
+    }
+    const customerDoc = await getDoc(doc(db, "customers", uid));
+    if (customerDoc.exists()) return "customer";
+    const workerDoc = await getDoc(doc(db, "workers", uid));
+    if (workerDoc.exists()) return "worker";
+    return null;
+  } catch (error) {
+    console.error("[Auth] getUserRole error:", error);
     return null;
   }
 };
@@ -334,8 +353,60 @@ export const updateUserProfile = async (
   }
 
   try {
-    const sanitizedUpdates = sanitizeForFirestore({ ...updates, updatedAt: new Date() });
-    await updateDoc(doc(db, "users", uid), sanitizedUpdates as Partial<FirestoreUser>);
+    const now = new Date();
+    const userRef = doc(db, "users", uid);
+    const userDoc = await getDoc(userRef);
+    const role: UserRole = updates.role || userDoc.data()?.role || "customer";
+
+    if (!userDoc.exists()) {
+      // Defensive: create the user document if it is somehow missing.
+      const newUser: FirestoreUser = {
+        uid,
+        email: updates.email || "",
+        name: updates.name || "",
+        role,
+        phone: updates.phone || "",
+        city: updates.city || "",
+        createdAt: now,
+        updatedAt: now,
+      };
+      await setDoc(userRef, sanitizeForFirestore(newUser));
+    } else {
+      const sanitizedUpdates = sanitizeForFirestore({ ...updates, updatedAt: now });
+      await updateDoc(userRef, sanitizedUpdates as Partial<FirestoreUser>);
+    }
+
+    // Keep the role-specific document in sync so dashboards and entitlements
+    // (e.g. customer free-contact unlocks, worker profile) resolve correctly.
+    if (role === "customer") {
+      const customerRef = doc(db, "customers", uid);
+      const base: CustomerDoc = {
+        uid,
+        email: updates.email || userDoc.data()?.email || "",
+        name: updates.name || userDoc.data()?.name || "",
+        phone: updates.phone || userDoc.data()?.phone || "",
+        role: "customer",
+        bookings: [],
+        savedWorkers: [],
+        reviewsGiven: [],
+        createdAt: now,
+        updatedAt: now,
+      };
+      await setDoc(customerRef, sanitizeForFirestore(base), { merge: true });
+    } else if (role === "worker") {
+      const workerRef = doc(db, "workers", uid);
+      await setDoc(
+        workerRef,
+        sanitizeForFirestore(buildWorkerDoc(uid, {
+          name: updates.name || userDoc.data()?.name || "",
+          email: updates.email || userDoc.data()?.email || "",
+          phone: updates.phone || userDoc.data()?.phone || "",
+          city: updates.city || userDoc.data()?.city || "",
+        })),
+        { merge: true }
+      );
+    }
+
     return { error: null };
   } catch (error: unknown) {
     const err = error as Error & { code?: string };
@@ -347,3 +418,58 @@ export const updateUserProfile = async (
     };
   }
 };
+
+// Builds a valid WorkerDoc shape used both for registration and for creating
+// the worker document when a user selects the "worker" role. `merge: true`
+// ensures it never overwrites an existing, partially completed profile.
+function buildWorkerDoc(
+  uid: string,
+  info: { name: string; email: string; phone: string; city?: string }
+): WorkerDoc {
+  const now = new Date();
+  const cityParts = (info.city || "").split(",").map((p) => p.trim());
+  return {
+    uid,
+    email: info.email || "",
+    name: info.name || "",
+    phone: info.phone || "",
+    role: "worker",
+    personalInfo: {
+      fullName: info.name || "",
+      email: info.email || "",
+      phone: info.phone || "",
+      address: "",
+    },
+    professionalInfo: {
+      profession: "",
+      experience: 0,
+      hourlyRate: 0,
+      description: "",
+      skills: [],
+      languages: [],
+      category: "",
+    },
+    documents: {},
+    availability: {
+      serviceRadius: 10,
+      availableDays: [],
+      workingHours: { start: "09:00", end: "18:00" },
+      emergencyService: false,
+      homeVisit: false,
+    },
+    serviceArea: {
+      state: cityParts[1] || "",
+      city: cityParts[0] || "",
+      pincode: "",
+    },
+    verificationStatus: "pending",
+    rating: 0,
+    reviewCount: 0,
+    reviews: [],
+    isAvailable: false,
+    isVerified: false,
+    joinedDate: now.toISOString(),
+    createdAt: now,
+    updatedAt: now,
+  };
+}

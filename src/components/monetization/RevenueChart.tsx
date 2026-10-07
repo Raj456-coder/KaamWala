@@ -2,7 +2,6 @@
 
 import { MonthlyRevenue } from "@/types/monetization";
 import { motion } from "framer-motion";
-import { cn } from "@/lib/utils";
 import { formatCurrency } from "@/lib/utils";
 
 interface RevenueChartProps {

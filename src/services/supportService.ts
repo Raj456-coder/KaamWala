@@ -15,7 +15,6 @@ import {
   SupportRequestStatus,
 } from "@/types/monetization";
 import { sanitizeForFirestore } from "@/lib/utils";
-import { createNotification } from "./notificationService";
 
 const now = () => new Date();
 

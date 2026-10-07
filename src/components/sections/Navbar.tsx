@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import Link from "next/link";
+import Image from "next/image";
 import {
   Menu,
   X,
@@ -13,10 +14,14 @@ import {
   Sun,
   Bell,
   Heart,
+  LayoutDashboard,
+  User,
 } from "lucide-react";
 import { useTheme } from "@/context/ThemeContext";
 import { useAuth } from "@/hooks/useAuth";
 import Button from "@/components/ui/Button";
+import Badge from "@/components/ui/Badge";
+import LogoutButton from "@/components/ui/LogoutButton";
 import { cn } from "@/lib/utils";
 import { getUnreadCount } from "@/services/notificationService";
 import NotificationCenter from "@/components/notifications/NotificationCenter";
@@ -199,16 +204,81 @@ export default function Navbar() {
                 </AnimatePresence>
               </div>
             )}
-              <Link href="/login">
-                <Button variant="ghost" size="sm" leftIcon={<LogIn className="w-4 h-4" />}>
-                  Login
-                </Button>
-              </Link>
-              <Link href="/register">
-                <Button variant="primary" size="sm" leftIcon={<UserPlus className="w-4 h-4" />}>
-                  Register
-                </Button>
-              </Link>
+            {user ? (
+              <div className="flex items-center gap-3">
+                <Link
+                  href={
+                    role === "worker"
+                      ? "/worker-dashboard"
+                      : role === "admin"
+                      ? "/admin"
+                      : role === "customer"
+                      ? "/customer-dashboard"
+                      : "/role-select"
+                  }
+                >
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    leftIcon={<LayoutDashboard className="w-4 h-4" />}
+                  >
+                    Dashboard
+                  </Button>
+                </Link>
+                <Link
+                  href={
+                    role === "worker"
+                      ? "/worker-dashboard"
+                      : role === "admin"
+                      ? "/admin"
+                      : role === "customer"
+                      ? "/customer-dashboard"
+                      : "/role-select"
+                  }
+                  className="flex items-center gap-2 p-1 pl-1 pr-2 rounded-full border border-slate-200 dark:border-slate-700 hover:border-primary/50 transition-colors"
+                  title={user.displayName || user.email || "Profile"}
+                  aria-label="User profile"
+                >
+                  {user.photoURL ? (
+                    <Image
+                      src={user.photoURL}
+                      alt={user.displayName || "Avatar"}
+                      width={28}
+                      height={28}
+                      className="w-7 h-7 rounded-full object-cover"
+                      unoptimized
+                    />
+                  ) : (
+                    <div className="w-7 h-7 rounded-full bg-primary/10 text-primary flex items-center justify-center font-bold text-xs uppercase">
+                      {user.displayName
+                        ? user.displayName.slice(0, 2)
+                        : user.email
+                        ? user.email.slice(0, 2)
+                        : <User className="w-3.5 h-3.5" />}
+                    </div>
+                  )}
+                  {role && (
+                    <Badge variant={role === "worker" ? "primary" : "neutral"} size="sm">
+                      {role.charAt(0).toUpperCase() + role.slice(1)}
+                    </Badge>
+                  )}
+                </Link>
+                <LogoutButton variant="ghost" size="sm" />
+              </div>
+            ) : (
+              <>
+                <Link href="/login">
+                  <Button variant="ghost" size="sm" leftIcon={<LogIn className="w-4 h-4" />}>
+                    Login
+                  </Button>
+                </Link>
+                <Link href="/register">
+                  <Button variant="primary" size="sm" leftIcon={<UserPlus className="w-4 h-4" />}>
+                    Register
+                  </Button>
+                </Link>
+              </>
+            )}
           </div>
 
           <div className="flex lg:hidden items-center gap-2">
@@ -331,17 +401,75 @@ export default function Navbar() {
                   </Link>
                 )}
                 <div className="flex flex-col gap-2 mt-4 pt-4 border-t border-slate-200 dark:border-slate-700">
-                <Link href="/login" className="w-full">
-                  <Button variant="outline" className="w-full justify-center">
-                    Login
-                  </Button>
-                </Link>
-                <Link href="/register" className="w-full">
-                  <Button variant="primary" className="w-full justify-center">
-                    Register
-                  </Button>
-                </Link>
-              </div>
+                  {user ? (
+                    <>
+                      <div className="flex items-center gap-3 p-3 bg-slate-50 dark:bg-slate-800/60 rounded-2xl mb-1">
+                        {user.photoURL ? (
+                          <Image
+                            src={user.photoURL}
+                            alt={user.displayName || "Avatar"}
+                            width={40}
+                            height={40}
+                            className="w-10 h-10 rounded-full object-cover"
+                            unoptimized
+                          />
+                        ) : (
+                          <div className="w-10 h-10 rounded-full bg-primary/10 text-primary flex items-center justify-center font-bold text-sm uppercase">
+                            {user.displayName
+                              ? user.displayName.slice(0, 2)
+                              : user.email
+                              ? user.email.slice(0, 2)
+                              : <User className="w-5 h-5" />}
+                          </div>
+                        )}
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-semibold text-text truncate">
+                            {user.displayName || user.email?.split("@")[0] || "User"}
+                          </p>
+                          {user.email && (
+                            <p className="text-xs text-text-muted truncate">{user.email}</p>
+                          )}
+                        </div>
+                        {role && (
+                          <Badge variant={role === "worker" ? "primary" : "neutral"} size="sm">
+                            {role.charAt(0).toUpperCase() + role.slice(1)}
+                          </Badge>
+                        )}
+                      </div>
+                      <Link
+                        href={
+                          role === "worker"
+                            ? "/worker-dashboard"
+                            : role === "admin"
+                            ? "/admin"
+                            : role === "customer"
+                            ? "/customer-dashboard"
+                            : "/role-select"
+                        }
+                        onClick={() => setIsMobileMenuOpen(false)}
+                        className="w-full"
+                      >
+                        <Button variant="primary" className="w-full justify-center" leftIcon={<LayoutDashboard className="w-4 h-4" />}>
+                          Dashboard
+                        </Button>
+                      </Link>
+                      <LogoutButton variant="ghost" className="w-full justify-center" onSuccess={() => setIsMobileMenuOpen(false)} />
+                    </>
+                  ) : (
+                    <>
+                      <Link href="/login" className="w-full" onClick={() => setIsMobileMenuOpen(false)}>
+                        <Button variant="outline" className="w-full justify-center">
+                          Login
+                        </Button>
+                      </Link>
+                      <Link href="/register" className="w-full" onClick={() => setIsMobileMenuOpen(false)}>
+                        <Button variant="primary" className="w-full justify-center">
+                          Register
+                        </Button>
+                      </Link>
+                    </>
+                  )}
+                </div>
             </nav>
           </motion.div>
         )}

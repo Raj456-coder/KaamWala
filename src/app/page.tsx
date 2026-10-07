@@ -14,13 +14,10 @@ import FAQ from "@/components/sections/FAQ";
 import CTASection from "@/components/sections/CTASection";
 import Footer from "@/components/sections/Footer";
 import RecommendationCards from "@/components/home/RecommendationCards";
-import DemoModeToggle from "@/components/demo/DemoModeToggle";
-import WorkerCard from "@/components/sections/WorkerCard";
+import WorkerCard from "@/components/workers/WorkerCard";
 import { WorkerCardSkeleton } from "@/components/ui/LoadingSkeleton";
 import { getFeaturedWorkers, mapWorkerDocsToProfiles, searchNearbyWorkers } from "@/services/firestoreService";
-import { getDemoWorkers } from "@/services/demoService";
 import { WorkerProfile } from "@/types";
-import { useDemoMode } from "@/hooks/useDemoMode";
 import { useLocation } from "@/hooks/useLocation";
 import Button from "@/components/ui/Button";
 import { MapPin, AlertCircle } from "lucide-react";
@@ -31,37 +28,33 @@ export default function Home() {
   const [nearbyWorkers, setNearbyWorkers] = useState<WorkerProfile[]>([]);
   const [loading, setLoading] = useState(true);
   const [nearbyLoading, setNearbyLoading] = useState(false);
-  const { isDemoMode } = useDemoMode();
   const { location, status, error: locationError, detectLocation } = useLocation();
 
   useEffect(() => {
+    let active = true;
     const fetchWorkers = async () => {
-      if (isDemoMode) {
-        const { workers: demoWorkers, error } = await getDemoWorkers(6);
-        if (!error && demoWorkers.length > 0) {
-          setWorkers(demoWorkers);
+      setLoading(true);
+      const { workers: fetchedWorkers, error } = await getFeaturedWorkers(6);
+      if (active) {
+        if (!error && fetchedWorkers.length > 0) {
+          const profiles = mapWorkerDocsToProfiles(fetchedWorkers);
+          setWorkers(profiles);
+        } else {
+          setWorkers([]);
         }
         setLoading(false);
-        return;
       }
-
-      const { workers: fetchedWorkers, error } = await getFeaturedWorkers(6);
-      if (!error && fetchedWorkers.length > 0) {
-        const profiles = await mapWorkerDocsToProfiles(fetchedWorkers);
-        setWorkers(profiles);
-      } else if (!error && fetchedWorkers.length === 0) {
-        const { workers: demoWorkers } = await getDemoWorkers(6);
-        setWorkers(demoWorkers);
-      }
-      setLoading(false);
     };
 
     fetchWorkers();
-  }, [isDemoMode]);
+    return () => {
+      active = false;
+    };
+  }, []);
 
   useEffect(() => {
     const fetchNearby = async () => {
-      if (!location || isDemoMode) return;
+      if (!location) return;
       setNearbyLoading(true);
       try {
         const { workers: nearby, error } = await searchNearbyWorkers({
@@ -88,7 +81,7 @@ export default function Home() {
     };
 
     fetchNearby();
-  }, [location, isDemoMode]);
+  }, [location]);
 
   const handleFindNearby = async () => {
     await detectLocation();
@@ -100,9 +93,6 @@ export default function Home() {
     <main className="min-h-screen">
       <Navbar />
       <Hero />
-      <div className="flex justify-end px-4 sm:px-6 lg:px-8 -mt-4">
-        <DemoModeToggle />
-      </div>
       <SearchBar />
 
       {status === "idle" && (

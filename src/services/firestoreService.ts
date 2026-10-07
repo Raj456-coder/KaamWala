@@ -59,7 +59,6 @@ export function mapFirestoreWorkerToProfile(
   const {
     id,
     name,
-    personalInfo,
     professionalInfo,
     rating,
     reviewCount,
@@ -100,7 +99,7 @@ export function mapFirestoreWorkerToProfile(
 
   const reviews: Review[] = [];
 
-  return {
+  const profile: WorkerProfile = {
     id,
     name: name || "",
     category: professionalInfo?.category || professionalInfo?.profession || "",
@@ -124,8 +123,13 @@ export function mapFirestoreWorkerToProfile(
     reviews,
     latitude: serviceArea?.latitude,
     longitude: serviceArea?.longitude,
-    phoneNumber: personalInfo?.phone,
   };
+
+  // Zero-leakage worker privacy: completely strip phoneNumber from public worker cards and search queries.
+  // Public clients must never receive worker phone numbers before entitlement.
+  delete profile.phoneNumber;
+
+  return profile;
 }
 
 export function mapWorkerDocsToProfiles(
@@ -224,27 +228,8 @@ export async function searchWorkers(
     if (params.isAvailable) {
       q = query(q, where("isAvailable", "==", true));
     }
-    q = query(q, where("verificationStatus", "not-in", ["suspended", "rejected"]));
     if (params.category) {
       q = query(q, where("professionalInfo.category", "==", params.category));
-    }
-    if (params.minRating !== undefined) {
-      q = query(q, where("rating", ">=", params.minRating));
-    }
-    if (params.maxRating !== undefined) {
-      q = query(q, where("rating", "<=", params.maxRating));
-    }
-    if (params.minPrice !== undefined) {
-      q = query(q, where("professionalInfo.hourlyRate", ">=", params.minPrice));
-    }
-    if (params.maxPrice !== undefined) {
-      q = query(q, where("professionalInfo.hourlyRate", "<=", params.maxPrice));
-    }
-    if (params.minExperience !== undefined) {
-      q = query(q, where("professionalInfo.experience", ">=", params.minExperience));
-    }
-    if (params.maxExperience !== undefined) {
-      q = query(q, where("professionalInfo.experience", "<=", params.maxExperience));
     }
 
     const sortFieldMap: Record<string, string> = {
@@ -272,6 +257,38 @@ export async function searchWorkers(
       id: doc.id,
       ...(doc.data() as WorkerDoc),
     }));
+
+    // Filter out suspended and rejected workers
+    workers = workers.filter(
+      (w) => w.verificationStatus !== "suspended" && w.verificationStatus !== "rejected"
+    );
+
+    if (params.minRating !== undefined) {
+      workers = workers.filter((w) => (w.rating || 0) >= params.minRating!);
+    }
+    if (params.maxRating !== undefined) {
+      workers = workers.filter((w) => (w.rating || 0) <= params.maxRating!);
+    }
+    if (params.minPrice !== undefined) {
+      workers = workers.filter(
+        (w) => (w.professionalInfo?.hourlyRate || 0) >= params.minPrice!
+      );
+    }
+    if (params.maxPrice !== undefined) {
+      workers = workers.filter(
+        (w) => (w.professionalInfo?.hourlyRate || 0) <= params.maxPrice!
+      );
+    }
+    if (params.minExperience !== undefined) {
+      workers = workers.filter(
+        (w) => (w.professionalInfo?.experience || 0) >= params.minExperience!
+      );
+    }
+    if (params.maxExperience !== undefined) {
+      workers = workers.filter(
+        (w) => (w.professionalInfo?.experience || 0) <= params.maxExperience!
+      );
+    }
 
     if (params.keyword) {
       const kw = params.keyword.toLowerCase();
@@ -568,7 +585,6 @@ export async function getAdminStats(): Promise<{ stats: AdminStats; error: strin
   try {
     const usersSnap = await getDocs(collection(db, "users"));
     const workersSnap = await getDocs(collection(db, "workers"));
-    const bookingsSnap = await getDocs(collection(db, "bookings"));
     const pendingSnap = await getDocs(
       query(collection(db, "workers"), where("verificationStatus", "==", "pending"))
     );

@@ -5,16 +5,13 @@ import Link from "next/link";
 import { Store, Tag } from "lucide-react";
 import Badge from "@/components/ui/Badge";
 import Button from "@/components/ui/Button";
-import { cn } from "@/lib/utils";
-import { formatCurrency } from "@/lib/utils";
-
 interface SponsoredCardProps {
   businessName: string;
   category: string;
   description: string;
   city: string;
   area?: string;
-  planId: string;
+  planId?: string;
   href?: string;
   index?: number;
 }
@@ -25,7 +22,6 @@ export default function SponsoredCard({
   description,
   city,
   area,
-  planId,
   href = "#",
   index = 0,
 }: SponsoredCardProps) {

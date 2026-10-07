@@ -102,7 +102,7 @@ export default function AdvertisePage() {
     setSubmitting(false);
   };
 
-  if (authLoading || !user) {
+  if (authLoading || loading || !user) {
     return (
       <main className="min-h-screen bg-surface">
         <Navbar />

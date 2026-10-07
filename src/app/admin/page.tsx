@@ -18,9 +18,7 @@ import {
   ShieldCheck,
   Users,
   BookOpen,
-  Star,
   FileText,
-  Settings,
   X,
   CheckCircle2,
   Headphones,
@@ -44,15 +42,17 @@ function KPICard({ title, value, icon }: { title: string; value: string | number
 }
 
 import { getAdminStats, getRecentUsers, getAllWorkers, getAllBookings } from "@/services/firestoreService";
-import { getDemoStats, DEMO_USERS } from "@/services/demoService";
+import { updateBookingStatus } from "@/services/bookingService";
 import {
   getAllTransactions,
   getAllSubscriptions,
   getAllMemberships,
   getAllContactUnlocks,
   listAdvertisers,
+  updateSubscriptionStatus,
+  updateMembershipStatus,
+  updateContactUnlockStatus,
 } from "@/services/monetizationService";
-import { useDemoMode } from "@/hooks/useDemoMode";
 import Badge from "@/components/ui/Badge";
 import { WorkerCardSkeleton } from "@/components/ui/LoadingSkeleton";
 import { FirestoreUser } from "@/types/firestore";
@@ -65,6 +65,9 @@ import {
   AdvertiserWithId,
   SupportRequestWithId,
   SupportRequestStatus,
+  SubscriptionStatus,
+  MembershipStatus,
+  ContactUnlockStatus,
 } from "@/types/monetization";
 import { WorkerVerificationDoc, AuditLogDoc, BookingDoc } from "@/types/firestore";
 import { cn, formatCurrency } from "@/lib/utils";
@@ -75,6 +78,7 @@ import {
   suspendWorker,
   reactivateWorker,
   getAuditLogs,
+  createAuditLog,
 } from "@/services/verificationService";
 import { getAllSupportRequests, updateSupportRequestStatus } from "@/services/supportService";
 
@@ -83,7 +87,6 @@ type AdminTab = "overview" | "workers" | "verifications" | "bookings" | "users" 
 export default function AdminPage() {
   const router = useRouter();
   const { user, loading: authLoading, role } = useAuth();
-  const { isDemoMode } = useDemoMode();
   const [stats, setStats] = useState<{
     totalUsers: number;
     totalWorkers: number;
@@ -136,13 +139,6 @@ export default function AdminPage() {
   useEffect(() => {
     const fetchData = async () => {
       setLoading(true);
-      if (isDemoMode) {
-        const { stats: demoStats } = await getDemoStats();
-        setStats(demoStats);
-        setRecentUsers(DEMO_USERS);
-        setLoading(false);
-        return;
-      }
 
       const { stats: fetchedStats, error: statsError } = await getAdminStats();
       if (!statsError && fetchedStats) {
@@ -187,7 +183,7 @@ export default function AdminPage() {
       setLoading(false);
     };
     fetchData();
-  }, [isDemoMode]);
+  }, []);
 
   const handleVerificationAction = async () => {
     if (!reviewingVerification || !reviewAction || !user) return;
@@ -280,6 +276,94 @@ export default function AdminPage() {
     setActionLoading(false);
   };
 
+  const handleBookingStatusChange = async (bookingId: string, newStatus: BookingDoc["status"]) => {
+    if (!user) return;
+    setActionLoading(true);
+    setActionError(null);
+    const res = await updateBookingStatus(bookingId, newStatus);
+    if (res.error) {
+      setActionError(res.error);
+    } else {
+      setBookings((prev) =>
+        prev.map((b) => (b.id === bookingId ? { ...b, status: newStatus } : b))
+      );
+      void createAuditLog(
+        user.uid,
+        `booking_status_${newStatus}`,
+        "booking",
+        bookingId,
+        `Status updated to ${newStatus} by admin`
+      );
+    }
+    setActionLoading(false);
+  };
+
+  const handleSubscriptionStatusChange = async (subId: string, newStatus: SubscriptionStatus) => {
+    if (!user) return;
+    setActionLoading(true);
+    setActionError(null);
+    const res = await updateSubscriptionStatus(subId, newStatus);
+    if (res.error) {
+      setActionError(res.error);
+    } else {
+      setSubscriptions((prev) =>
+        prev.map((s) => (s.id === subId ? { ...s, status: newStatus } : s))
+      );
+      void createAuditLog(
+        user.uid,
+        `subscription_status_${newStatus}`,
+        "subscription",
+        subId,
+        `Subscription status updated to ${newStatus} by admin`
+      );
+    }
+    setActionLoading(false);
+  };
+
+  const handleMembershipStatusChange = async (memId: string, newStatus: MembershipStatus) => {
+    if (!user) return;
+    setActionLoading(true);
+    setActionError(null);
+    const res = await updateMembershipStatus(memId, newStatus);
+    if (res.error) {
+      setActionError(res.error);
+    } else {
+      setMemberships((prev) =>
+        prev.map((m) => (m.id === memId ? { ...m, status: newStatus } : m))
+      );
+      void createAuditLog(
+        user.uid,
+        `membership_status_${newStatus}`,
+        "membership",
+        memId,
+        `Membership status updated to ${newStatus} by admin`
+      );
+    }
+    setActionLoading(false);
+  };
+
+  const handleContactUnlockStatusChange = async (unlockId: string, newStatus: ContactUnlockStatus) => {
+    if (!user) return;
+    setActionLoading(true);
+    setActionError(null);
+    const res = await updateContactUnlockStatus(unlockId, newStatus);
+    if (res.error) {
+      setActionError(res.error);
+    } else {
+      setUnlocks((prev) =>
+        prev.map((u) => (u.id === unlockId ? { ...u, status: newStatus } : u))
+      );
+      void createAuditLog(
+        user.uid,
+        `contact_unlock_${newStatus}`,
+        "contact_unlock",
+        unlockId,
+        `Contact unlock status updated to ${newStatus} by admin`
+      );
+    }
+    setActionLoading(false);
+  };
+
   if (authLoading || !user || role !== "admin") {
     return (
       <main className="min-h-screen bg-surface">
@@ -331,11 +415,6 @@ export default function AdminPage() {
               <h1 className="text-3xl sm:text-4xl font-bold font-heading text-text mb-2">Admin Dashboard</h1>
               <p className="text-text-secondary">Platform management and moderation</p>
             </div>
-            {isDemoMode && (
-              <Badge variant="warning" size="md">
-                Demo Mode
-              </Badge>
-            )}
           </div>
 
           <div className="flex flex-wrap gap-2 mb-6">
@@ -624,6 +703,7 @@ export default function AdminPage() {
                           <th className="text-left py-3 px-4 text-sm font-medium text-text-muted">Date</th>
                           <th className="text-left py-3 px-4 text-sm font-medium text-text-muted">Status</th>
                           <th className="text-left py-3 px-4 text-sm font-medium text-text-muted">Created</th>
+                          <th className="text-left py-3 px-4 text-sm font-medium text-text-muted">Action</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -647,6 +727,22 @@ export default function AdminPage() {
                               </td>
                               <td className="py-3 px-4 text-sm text-text-secondary">
                                 {new Date(booking.createdAt).toLocaleDateString("en-IN")}
+                              </td>
+                              <td className="py-3 px-4">
+                                <select
+                                  value={booking.status}
+                                  disabled={actionLoading}
+                                  onChange={(e) => handleBookingStatusChange(booking.id, e.target.value as BookingDoc["status"])}
+                                  className="px-3 py-1.5 bg-surface dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg text-sm text-text focus:outline-none focus:ring-2 focus:ring-primary/40 disabled:opacity-50"
+                                >
+                                  <option value="pending">Pending</option>
+                                  <option value="accepted">Accepted</option>
+                                  <option value="confirmed">Confirmed</option>
+                                  <option value="in-progress">In Progress</option>
+                                  <option value="completed">Completed</option>
+                                  <option value="cancelled">Cancelled</option>
+                                  <option value="rejected">Rejected</option>
+                                </select>
                               </td>
                             </tr>
                           ))}
@@ -717,14 +813,41 @@ export default function AdminPage() {
                 <p className="text-text-secondary text-center py-8">No subscriptions yet.</p>
               ) : (
                 subscriptions.map((sub) => (
-                  <div key={sub.id} className="flex items-center justify-between p-4 rounded-xl border border-slate-200 dark:border-slate-700">
+                  <div key={sub.id} className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 rounded-xl border border-slate-200 dark:border-slate-700">
                     <div>
                       <p className="font-medium text-text">User: {sub.userId}</p>
-                      <p className="text-sm text-text-secondary capitalize">{sub.planId} · {sub.status}</p>
+                      <p className="text-sm text-text-secondary capitalize">{sub.planId} · {sub.price ? formatCurrency(sub.price) : "Free"} · {sub.status}</p>
+                      {sub.endDate && (
+                        <p className="text-xs text-text-muted">
+                          Expires: {new Date(sub.endDate).toLocaleDateString("en-IN")}
+                        </p>
+                      )}
                     </div>
-                    <Badge variant={sub.status === "active" ? "success" : sub.status === "pending" ? "warning" : "neutral"}>
-                      {sub.status}
-                    </Badge>
+                    <div className="flex items-center gap-2">
+                      <Badge variant={sub.status === "active" ? "success" : sub.status === "pending" ? "warning" : "neutral"}>
+                        {sub.status}
+                      </Badge>
+                      {sub.status !== "active" && (
+                        <Button
+                          variant="primary"
+                          size="sm"
+                          disabled={actionLoading}
+                          onClick={() => handleSubscriptionStatusChange(sub.id, "active")}
+                        >
+                          Activate
+                        </Button>
+                      )}
+                      {sub.status === "active" && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={actionLoading}
+                          onClick={() => handleSubscriptionStatusChange(sub.id, "cancelled")}
+                        >
+                          Cancel
+                        </Button>
+                      )}
+                    </div>
                   </div>
                 ))
               )}
@@ -737,14 +860,41 @@ export default function AdminPage() {
                 <p className="text-text-secondary text-center py-8">No memberships yet.</p>
               ) : (
                 memberships.map((mem) => (
-                  <div key={mem.id} className="flex items-center justify-between p-4 rounded-xl border border-slate-200 dark:border-slate-700">
+                  <div key={mem.id} className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 rounded-xl border border-slate-200 dark:border-slate-700">
                     <div>
                       <p className="font-medium text-text">User: {mem.userId}</p>
                       <p className="text-sm text-text-secondary capitalize">{mem.planId} · {mem.status}</p>
+                      {mem.endDate && (
+                        <p className="text-xs text-text-muted">
+                          Expires: {new Date(mem.endDate).toLocaleDateString("en-IN")}
+                        </p>
+                      )}
                     </div>
-                    <Badge variant={mem.status === "active" ? "success" : mem.status === "pending" ? "warning" : "neutral"}>
-                      {mem.status}
-                    </Badge>
+                    <div className="flex items-center gap-2">
+                      <Badge variant={mem.status === "active" ? "success" : mem.status === "pending" ? "warning" : "neutral"}>
+                        {mem.status}
+                      </Badge>
+                      {mem.status !== "active" && (
+                        <Button
+                          variant="primary"
+                          size="sm"
+                          disabled={actionLoading}
+                          onClick={() => handleMembershipStatusChange(mem.id, "active")}
+                        >
+                          Activate
+                        </Button>
+                      )}
+                      {mem.status === "active" && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={actionLoading}
+                          onClick={() => handleMembershipStatusChange(mem.id, "cancelled")}
+                        >
+                          Cancel
+                        </Button>
+                      )}
+                    </div>
                   </div>
                 ))
               )}
@@ -757,14 +907,38 @@ export default function AdminPage() {
                 <p className="text-text-secondary text-center py-8">No contact unlocks yet.</p>
               ) : (
                 unlocks.map((unlock) => (
-                  <div key={unlock.id} className="flex items-center justify-between p-4 rounded-xl border border-slate-200 dark:border-slate-700">
+                  <div key={unlock.id} className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 rounded-xl border border-slate-200 dark:border-slate-700">
                     <div>
                       <p className="font-medium text-text">Customer: {unlock.customerId} → Worker: {unlock.workerId}</p>
-                      <p className="text-sm text-text-secondary">{formatCurrency(unlock.amount)} · {unlock.status}</p>
+                      <p className="text-sm text-text-secondary">
+                        {formatCurrency(unlock.amount)} · {unlock.status} {unlock.workerPhone ? `· Phone: ${unlock.workerPhone}` : ""}
+                      </p>
                     </div>
-                    <Badge variant={unlock.status === "success" ? "success" : unlock.status === "pending" ? "warning" : "neutral"}>
-                      {unlock.status}
-                    </Badge>
+                    <div className="flex items-center gap-2">
+                      <Badge variant={unlock.status === "success" ? "success" : unlock.status === "pending" ? "warning" : "neutral"}>
+                        {unlock.status}
+                      </Badge>
+                      {unlock.status !== "success" && (
+                        <Button
+                          variant="primary"
+                          size="sm"
+                          disabled={actionLoading}
+                          onClick={() => handleContactUnlockStatusChange(unlock.id, "success")}
+                        >
+                          Approve
+                        </Button>
+                      )}
+                      {unlock.status === "success" && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={actionLoading}
+                          onClick={() => handleContactUnlockStatusChange(unlock.id, "failed")}
+                        >
+                          Revoke
+                        </Button>
+                      )}
+                    </div>
                   </div>
                 ))
               )}

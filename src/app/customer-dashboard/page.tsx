@@ -39,7 +39,6 @@ import { getReviewsByBooking } from "@/services/bookingService";
 import { createNotification } from "@/services/notificationService";
 import { updateBookingStatus } from "@/services/bookingService";
 import { getMembershipByUserId, getCustomerFreeContactCount } from "@/services/monetizationService";
-import { MembershipWithId, ContactUnlockWithId } from "@/types/monetization";
 import { BookingDoc, ReviewDoc } from "@/types/firestore";
 import { FirestoreWorker } from "@/services/firestoreService";
 import { TransactionWithId } from "@/types/monetization";
@@ -208,7 +207,7 @@ export default function CustomerDashboard() {
 
   useEffect(() => {
     if (user && role === "worker") {
-      router.push("/role-select");
+      router.push("/worker-dashboard");
     }
   }, [user, role, router]);
 

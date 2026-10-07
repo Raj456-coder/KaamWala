@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import { useParams, notFound } from "next/navigation";
 import Navbar from "@/components/sections/Navbar";
 import Footer from "@/components/sections/Footer";
-import SearchWorkerCard from "@/components/search/WorkerCard";
+import WorkerCard from "@/components/workers/WorkerCard";
 import { getCategories, searchWorkers, mapWorkerDocsToProfiles } from "@/services/firestoreService";
 import { CategoryWithId } from "@/services/firestoreService";
 import { WorkerProfile } from "@/types";
@@ -90,7 +90,7 @@ export default function CategoryPage() {
           ) : (
             <div className="grid sm:grid-cols-2 xl:grid-cols-3 gap-6">
               {workers.map((worker, index) => (
-                <SearchWorkerCard key={worker.id} worker={worker} index={index} />
+                <WorkerCard key={worker.id} worker={worker} index={index} />
               ))}
             </div>
           )}

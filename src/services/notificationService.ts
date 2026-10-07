@@ -135,10 +135,13 @@ export async function getUnreadCount(
 }
 
 export async function sendEmailNotification(
-  _to: string,
-  _subject: string,
-  _message: string
+  to: string,
+  subject: string,
+  message: string
 ): Promise<{ success: boolean; error: string | null }> {
+  void to;
+  void subject;
+  void message;
   return {
     success: false,
     error: "Email provider not configured. Connect an email service to enable email notifications.",
@@ -146,10 +149,13 @@ export async function sendEmailNotification(
 }
 
 export async function sendPushNotification(
-  _userId: string,
-  _title: string,
-  _message: string
+  userId: string,
+  title: string,
+  message: string
 ): Promise<{ success: boolean; error: string | null }> {
+  void userId;
+  void title;
+  void message;
   return {
     success: false,
     error: "Push notification provider not configured.",

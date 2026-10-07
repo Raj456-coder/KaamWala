@@ -5,7 +5,6 @@ import Navbar from "@/components/sections/Navbar";
 import Footer from "@/components/sections/Footer";
 import { motion } from "framer-motion";
 import Button from "@/components/ui/Button";
-import Badge from "@/components/ui/Badge";
 import { Bell, AlertCircle } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { useRouter } from "next/navigation";

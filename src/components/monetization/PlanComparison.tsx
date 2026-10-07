@@ -3,7 +3,7 @@
 import { motion } from "framer-motion";
 import Button from "@/components/ui/Button";
 import Badge from "@/components/ui/Badge";
-import { CheckCircle2, Lock } from "lucide-react";
+import { CheckCircle2 } from "lucide-react";
 import { Plan } from "@/types/monetization";
 import { cn } from "@/lib/utils";
 import { formatCurrency } from "@/lib/utils";

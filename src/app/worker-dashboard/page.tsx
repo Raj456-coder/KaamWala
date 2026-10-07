@@ -135,7 +135,7 @@ export default function WorkerDashboard() {
 
   useEffect(() => {
     if (user && role === "customer") {
-      router.push("/role-select");
+      router.push("/customer-dashboard");
     }
   }, [user, role, router]);
 

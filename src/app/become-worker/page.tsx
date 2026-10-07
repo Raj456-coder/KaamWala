@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useState, useRef, useEffect } from "react";
 import type { ReactNode } from "react";
@@ -562,12 +562,24 @@ export default function BecomeWorkerPage() {
           </p>
 
           <div className="flex flex-col gap-3">
-            <Button variant="primary" className="w-full" leftIcon={<User className="w-4 h-4" />} onClick={() => {}}>
-              Go to Dashboard
-            </Button>
-            <Button variant="outline" className="w-full" leftIcon={<BookOpen className="w-4 h-4" />} onClick={() => {}}>
-              View Profile
-            </Button>
+            <Link href="/worker-dashboard" className="w-full">
+              <Button
+                variant="primary"
+                className="w-full justify-center"
+                leftIcon={<User className="w-4 h-4" />}
+              >
+                Go to Dashboard
+              </Button>
+            </Link>
+            <Link href={user?.uid ? `/workers/${user.uid}` : "/workers"} className="w-full">
+              <Button
+                variant="outline"
+                className="w-full justify-center"
+                leftIcon={<BookOpen className="w-4 h-4" />}
+              >
+                View Profile
+              </Button>
+            </Link>
           </div>
         </motion.div>
       </main>

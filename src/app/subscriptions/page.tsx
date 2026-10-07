@@ -5,7 +5,6 @@ import { useRouter } from "next/navigation";
 import Navbar from "@/components/sections/Navbar";
 import Footer from "@/components/sections/Footer";
 import { motion } from "framer-motion";
-import Button from "@/components/ui/Button";
 import Badge from "@/components/ui/Badge";
 import { AlertCircle, CheckCircle2, Zap } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
@@ -14,6 +13,7 @@ import {
   createOrUpdateSubscription,
   getSubscriptionByUserId,
 } from "@/services/monetizationService";
+import { createPaymentOrder, processPayment, verifyPayment } from "@/services/paymentService";
 import { SubscriptionPlanId } from "@/types/monetization";
 import PlanComparison from "@/components/monetization/PlanComparison";
 
@@ -24,6 +24,7 @@ export default function SubscriptionsPage() {
   const [loading, setLoading] = useState(true);
   const [upgrading, setUpgrading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
   useEffect(() => {
     if (authLoading) return;
@@ -32,7 +33,7 @@ export default function SubscriptionsPage() {
       return;
     }
     if (role !== "worker") {
-      router.push("/role-select");
+      router.push(role === "customer" ? "/customer-dashboard" : "/role-select");
       return;
     }
   }, [user, authLoading, role, router]);
@@ -54,12 +55,23 @@ export default function SubscriptionsPage() {
     if (!user || upgrading) return;
     setUpgrading(true);
     setError(null);
+    setSuccessMsg(null);
 
-    const currentPlan = subscription?.planId;
-    const isUpgrade = planId !== "free" && (currentPlan === "free" || currentPlan === "monthly");
+    const selectedPlan = WORKER_SUBSCRIPTION_PLANS.find((p) => p.id === planId);
+    if (!selectedPlan) {
+      setError("Invalid plan selected.");
+      setUpgrading(false);
+      return;
+    }
 
-    if (!isUpgrade && planId !== "free") {
-      setError("Payment verification required. Please contact support to complete upgrade.");
+    if (planId === "free") {
+      const result = await createOrUpdateSubscription(user.uid, "free", "active");
+      if (result.error) {
+        setError(result.error);
+      } else {
+        setSubscription({ planId: "free", status: "active" });
+        setSuccessMsg("Switched to Free plan.");
+      }
       setUpgrading(false);
       return;
     }
@@ -67,16 +79,66 @@ export default function SubscriptionsPage() {
     const result = await createOrUpdateSubscription(user.uid, planId as SubscriptionPlanId, "pending");
     if (result.error) {
       setError(result.error);
-    } else {
-      setSubscription({ planId: planId as SubscriptionPlanId, status: "pending" });
-      setError(
-        "Plan selected. Connect a payment provider in the admin panel to verify and activate your subscription."
-      );
+      setUpgrading(false);
+      return;
     }
-    setUpgrading(false);
+
+    setSubscription({ planId: planId as SubscriptionPlanId, status: "pending" });
+
+    const razorpayKeyId = process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID;
+    if (!razorpayKeyId) {
+      setError(
+        "Plan selected (pending activation). Payment provider is not configured yet — an administrator can activate your subscription in the Admin Dashboard."
+      );
+      setUpgrading(false);
+      return;
+    }
+
+    const { orderId, error: orderErr } = await createPaymentOrder(
+      user.uid,
+      "worker_subscription",
+      selectedPlan.price,
+      result.id
+    );
+
+    if (orderErr || !orderId) {
+      setError(orderErr || "Failed to create payment order.");
+      setUpgrading(false);
+      return;
+    }
+
+    await processPayment({
+      amount: selectedPlan.price,
+      name: user.displayName || "Worker",
+      description: `${selectedPlan.name} Subscription`,
+      orderId,
+      userId: user.uid,
+      subscriptionId: result.id,
+      onSuccess: async (response) => {
+        const verifyRes = await verifyPayment(
+          orderId,
+          response.razorpay_payment_id,
+          response.razorpay_signature,
+          undefined,
+          user.uid,
+          { subscriptionId: result.id, userId: user.uid }
+        );
+        if (verifyRes.success) {
+          setSubscription({ planId: planId as SubscriptionPlanId, status: "active" });
+          setSuccessMsg(`Your ${selectedPlan.name} subscription has been activated!`);
+        } else {
+          setError(verifyRes.error || "Payment verification failed.");
+        }
+        setUpgrading(false);
+      },
+      onFailure: (errMsg) => {
+        setError(errMsg);
+        setUpgrading(false);
+      },
+    });
   };
 
-  if (authLoading || !user || role !== "worker") {
+  if (authLoading || loading || !user || role !== "worker") {
     return (
       <main className="min-h-screen bg-surface">
         <Navbar />
@@ -118,6 +180,13 @@ export default function SubscriptionsPage() {
                 Current: {subscription.planId.toUpperCase()} · {subscription.status}
               </Badge>
             </motion.div>
+          )}
+
+          {successMsg && (
+            <div className="mb-8 max-w-3xl mx-auto bg-success-50 dark:bg-success-950 text-success-700 dark:text-success-200 p-4 rounded-2xl border border-success-200 dark:border-success-800 flex items-start gap-3">
+              <CheckCircle2 className="w-5 h-5 flex-shrink-0 mt-0.5 text-success" />
+              <p className="text-sm font-medium">{successMsg}</p>
+            </div>
           )}
 
           {error && (

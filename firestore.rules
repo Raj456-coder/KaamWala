@@ -6,12 +6,16 @@ service cloud.firestore {
       return request.auth != null;
     }
 
-    function isOwner(userId: string) {
+    function isOwner(userId) {
       return isAuthenticated() && request.auth.uid == userId;
     }
 
+    // Safe admin check: a missing/invalid users document must NOT throw
+    // (an exception in an `||` branch would deny the whole rule).
     function isAdmin() {
-      return isAuthenticated() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == "admin";
+      return isAuthenticated()
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == "admin";
     }
 
     // Users: a user can read/write only their own user document; admin can read all
@@ -57,6 +61,13 @@ service cloud.firestore {
       allow update, delete: if isAuthenticated() && (resource.data.customerId == request.auth.uid || resource.data.workerId == request.auth.uid || isAdmin());
     }
 
+    // Booking reviews (subcollection) — participant readable, author creatable
+    match /bookings/{bookingId}/reviews/{reviewId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && request.resource.data.customerId == request.auth.uid;
+      allow update, delete: if isAdmin();
+    }
+
     // Reviews: anyone can read; customer can create; only the reviewer can update/delete; admin can delete
     match /reviews/{reviewId} {
       allow read: if true;
@@ -78,16 +89,22 @@ service cloud.firestore {
 
     // Payments: customer and worker can read their own; admin can read all
     match /payments/{paymentId} {
-      allow read: if isAuthenticated() && (resource.data.customerId == request.auth.uid || resource.data.workerId == request.auth.uid || isAdmin());
-      allow create: if isAuthenticated() && request.resource.data.customerId == request.auth.uid;
+      allow read: if isOwner(resource.data.userId) || isAdmin();
+      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
       allow update, delete: if isAdmin();
     }
 
-    // Notifications: user can read/write their own
+    // Notifications: user can read/write their own. A user may create a
+    // notification addressed to ANY recipient (e.g. a customer notifying the
+    // worker about a booking) using their own auth identity.
     match /notifications/{notificationId} {
       allow read: if isOwner(resource.data.recipientId);
-      allow create: if isAuthenticated() && request.resource.data.recipientId == request.auth.uid;
-      allow update, delete: if isOwner(resource.data.recipientId);
+      allow create: if isAuthenticated()
+        && request.resource.data.recipientId is string
+        && request.resource.data.recipientId.size() > 0
+        && request.resource.data.read == false
+        && request.resource.data.keys().hasOnly(["recipientId", "type", "title", "message", "relatedId", "read", "createdAt"]);
+      allow update, delete: if isOwner(resource.data.recipientId) || isAdmin();
     }
 
     // Storage: users can read/write their own files
@@ -109,11 +126,28 @@ service cloud.firestore {
       allow update, delete: if isAdmin();
     }
 
-    // Contact Unlocks: customer/worker read own; admin reads all; admin manages
+    // Contact Unlocks: customer/worker read own; admin reads all.
+    // Customer can create their own unlock (free → status "success",
+    // paid → status "pending").  Only admin may update (server-side
+    // payment verification via API route uses the Admin SDK which
+    // bypasses rules).  This prevents customers from flipping their
+    // own pending unlock to success without paying.
     match /contactUnlocks/{unlockId} {
-      allow read: if isAuthenticated() && (resource.data.customerId == request.auth.uid || resource.data.workerId == request.auth.uid || isAdmin());
-      allow create: if isAuthenticated() && request.resource.data.customerId == request.auth.uid;
-      allow update, delete: if isAdmin();
+      allow read: if isAuthenticated()
+        && (resource.data.customerId == request.auth.uid
+            || resource.data.workerId == request.auth.uid
+            || isAdmin());
+      allow create: if isAuthenticated()
+        && request.resource.data.customerId == request.auth.uid
+        && (
+          (request.resource.data.unlockType == "free"
+            && request.resource.data.status == "success"
+            && request.resource.data.amount == 0)
+          || (request.resource.data.unlockType == "paid"
+            && request.resource.data.status == "pending")
+        );
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
     }
 
     // Advertisers: creator reads own; admin reads all; admin manages
@@ -123,10 +157,19 @@ service cloud.firestore {
       allow update, delete: if isAdmin();
     }
 
-    // Transactions: user reads own; admin reads all; no client write
+    // Transactions: user reads own; customer creates own PENDING (or a
+    // ₹0 success record for a free contact unlock).  Only admin may
+    // update (server-side payment verification uses the Admin SDK).
+    // Prevents customers from marking their own pending payment as
+    // success without going through the payment provider.
     match /transactions/{transactionId} {
       allow read: if isOwner(resource.data.userId) || isAdmin();
-      allow create, update, delete: if isAdmin();
+      allow create: if isAuthenticated()
+        && request.resource.data.userId == request.auth.uid
+        && (request.resource.data.status == "pending"
+            || (request.resource.data.status == "success" && request.resource.data.amount == 0));
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
     }
 
     // Support Requests: customer can create; customer/admin can read own; admin can update

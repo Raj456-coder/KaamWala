@@ -3,21 +3,20 @@
 import Navbar from "@/components/sections/Navbar";
 import Footer from "@/components/sections/Footer";
 import SearchFiltersPanel from "@/components/search/SearchFilters";
-import SearchWorkerCard from "@/components/search/WorkerCard";
+import WorkerCard from "@/components/workers/WorkerCard";
 import FilterChips from "@/components/search/FilterChips";
 import AiAssistantPanel from "@/components/search/AiAssistantPanel";
 import { searchWorkers, mapWorkerDocsToProfiles, searchNearbyWorkers } from "@/services/firestoreService";
-import { getDemoWorkers } from "@/services/demoService";
-import { RankedWorker } from "@/services/aiSearchService";
+import { RankedWorker, searchWorkersWithAI } from "@/services/aiSearchService";
+import { ExtractedIntent, ClarificationOption, SessionContext } from "@/lib/ai/types";
 import { WorkerCardSkeleton } from "@/components/ui/LoadingSkeleton";
 import { SearchFilters, WorkerProfile } from "@/types";
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import { QueryDocumentSnapshot } from "firebase/firestore";
 import { motion } from "framer-motion";
 import Button from "@/components/ui/Button";
 import { Loader2, X, Star, MapPin, AlertCircle, TrendingUp } from "lucide-react";
-import { useDemoMode } from "@/hooks/useDemoMode";
 import { useLocation } from "@/hooks/useLocation";
-import { defaultAIProvider } from "@/lib/ai/provider";
 import { trackSearchEvent, persistSearchToFirestore } from "@/lib/analytics";
 import { useAuth } from "@/hooks/useAuth";
 
@@ -38,7 +37,10 @@ function filterWorkers(workers: WorkerProfile[], filters: SearchFilters) {
   let filtered = [...workers];
 
   if (filters.category) {
-    filtered = filtered.filter((w) => w.categorySlug === filters.category);
+    const cat = filters.category.toLowerCase();
+    filtered = filtered.filter(
+      (w) => w.categorySlug.toLowerCase() === cat || w.category.toLowerCase() === cat
+    );
   }
   if (filters.location) {
     const loc = filters.location.toLowerCase();
@@ -74,12 +76,24 @@ function filterWorkers(workers: WorkerProfile[], filters: SearchFilters) {
 
   filtered.sort((a, b) => {
     switch (filters.sortBy) {
-      case "rating": return b.rating - a.rating;
-      case "distance": return a.distance.localeCompare(b.distance);
-      case "price": return a.hourlyRate - b.hourlyRate;
-      case "experience": return b.experience - a.experience;
-      case "newest": return parseInt(b.id) - parseInt(a.id);
-      default: return 0;
+      case "rating":
+        return (b.rating || 0) - (a.rating || 0);
+      case "distance": {
+        const distA = parseFloat(a.distance) || Infinity;
+        const distB = parseFloat(b.distance) || Infinity;
+        return distA - distB;
+      }
+      case "price":
+        return (a.hourlyRate || 0) - (b.hourlyRate || 0);
+      case "experience":
+        return (b.experience || 0) - (a.experience || 0);
+      case "newest": {
+        const dateA = a.joinedDate ? new Date(a.joinedDate).getTime() : 0;
+        const dateB = b.joinedDate ? new Date(b.joinedDate).getTime() : 0;
+        return dateB - dateA || b.id.localeCompare(a.id);
+      }
+      default:
+        return 0;
     }
   });
 
@@ -89,7 +103,6 @@ function filterWorkers(workers: WorkerProfile[], filters: SearchFilters) {
 const PAGE_SIZE = 12;
 
 export default function SearchPage() {
-  const { isDemoMode } = useDemoMode();
   const { location, status, error: locationError, detectLocation } = useLocation();
   const { user } = useAuth();
   const [filters, setFilters] = useState<SearchFilters>(initialFilters);
@@ -118,76 +131,100 @@ export default function SearchPage() {
   const [noResultSuggestions, setNoResultSuggestions] = useState<string[]>([]);
   const [searchError, setSearchError] = useState<string | null>(null);
 
+  // Multi-turn Conversational AI Assistant State
+  const [sessionContext, setSessionContext] = useState<SessionContext>({});
+  const [aiIntent, setAiIntent] = useState<ExtractedIntent | null>(null);
+  const [aiReplyMessage, setAiReplyMessage] = useState<string | null>(null);
+  const [clarificationOptions, setClarificationOptions] = useState<ClarificationOption[] | null>(null);
+
+  const cursorRef = useRef<QueryDocumentSnapshot | null>(null);
+  const isFetchingRef = useRef(false);
+
+  const locLatitude = location?.latitude;
+  const locLongitude = location?.longitude;
+
   const fetchWorkers = useCallback(async () => {
+    if (isFetchingRef.current) return;
+    isFetchingRef.current = true;
     setLoading(true);
     setSearchError(null);
+    cursorRef.current = null;
 
-    if (isDemoMode) {
-      const { workers, error } = await getDemoWorkers(50);
-      if (!error && workers.length > 0) {
-        setAllWorkers(workers);
+    try {
+      if (useNearby && locLatitude !== undefined && locLongitude !== undefined) {
+        const radius = filters.maxDistance || 10;
+
+        const { workers, error } = await searchNearbyWorkers({
+          latitude: locLatitude,
+          longitude: locLongitude,
+          radiusKm: radius,
+          verifiedOnly: filters.verifiedOnly,
+          isAvailable: filters.availability,
+          category: filters.category,
+          minRating: filters.minRating,
+          sortBy: filters.sortBy as "distance" | "rating" | "price" | "experience",
+          limit: 100,
+        });
+
+        if (!error && workers.length > 0) {
+          const profiles = workers.map((w) =>
+            mapWorkerDocsToProfiles([w], { latitude: locLatitude, longitude: locLongitude })[0]
+          );
+          setAllWorkers(profiles);
+        } else {
+          setAllWorkers([]);
+          if (error) setSearchError(error);
+        }
+        return;
       }
-      setLoading(false);
-      return;
-    }
 
-    if (useNearby && location) {
-      const radius = filters.maxDistance || 10;
-
-      const { workers, error } = await searchNearbyWorkers({
-        latitude: location.latitude,
-        longitude: location.longitude,
-        radiusKm: radius,
+      const { workers, lastDoc, error } = await searchWorkers({
+        limit: 100,
+        sortBy: filters.sortBy || "rating",
         verifiedOnly: filters.verifiedOnly,
-        isAvailable: filters.availability,
         category: filters.category,
         minRating: filters.minRating,
-        sortBy: filters.sortBy as "distance" | "rating" | "price" | "experience",
-        limit: 100,
+        isAvailable: filters.availability,
       });
 
       if (!error && workers.length > 0) {
-        const profiles = workers.map((w) =>
-          mapWorkerDocsToProfiles([w], { latitude: location.latitude, longitude: location.longitude })[0]
-        );
+        const profiles = mapWorkerDocsToProfiles(workers);
         setAllWorkers(profiles);
-      } else if (!error && workers.length === 0) {
-        const { workers: demoWorkers } = await getDemoWorkers(50);
-        setAllWorkers(demoWorkers);
-      } else if (error) {
-        const { workers: demoWorkers } = await getDemoWorkers(50);
-        setAllWorkers(demoWorkers);
+        cursorRef.current = lastDoc;
+      } else {
+        setAllWorkers([]);
+        if (error) setSearchError(error);
       }
+    } finally {
       setLoading(false);
-      return;
+      isFetchingRef.current = false;
     }
-
-    const { workers, error } = await searchWorkers({
-      limit: 100,
-      sortBy: filters.sortBy || "rating",
-      verifiedOnly: filters.verifiedOnly,
-      category: filters.category,
-      minRating: filters.minRating,
-      isAvailable: filters.availability,
-    });
-
-    if (!error && workers.length > 0) {
-      const profiles = await mapWorkerDocsToProfiles(workers);
-      setAllWorkers(profiles);
-    } else {
-      const { workers: demoWorkers } = await getDemoWorkers(50);
-      setAllWorkers(demoWorkers);
-    }
-    setLoading(false);
-  }, [isDemoMode, useNearby, location, filters]);
+  }, [
+    useNearby,
+    locLatitude,
+    locLongitude,
+    filters.category,
+    filters.sortBy,
+    filters.minRating,
+    filters.maxDistance,
+    filters.verifiedOnly,
+    filters.availability,
+  ]);
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    fetchWorkers();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isDemoMode, useNearby, location, filters.sortBy, filters.verifiedOnly, filters.category, filters.minRating, filters.availability, filters.maxDistance]);
+    let active = true;
+    const run = async () => {
+      if (active) {
+        await fetchWorkers();
+      }
+    };
+    run();
+    return () => {
+      active = false;
+    };
+  }, [fetchWorkers]);
 
-  const performAiSearch = useCallback(async (query: string) => {
+  const performAiSearch = useCallback(async (query: string, contextOverride?: SessionContext) => {
     if (!query.trim()) return;
 
     setIsAiSearching(true);
@@ -195,34 +232,60 @@ export default function SearchPage() {
     setAiSummary(null);
     setNoResultSuggestions([]);
 
-    try {
-      const intent = await defaultAIProvider.extractIntent(query, location ? { location } : undefined);
+    const currentContext = contextOverride || sessionContext;
+    const userLocationContext = {
+      latitude: location?.latitude,
+      longitude: location?.longitude,
+      city: location?.city || location?.area,
+    };
 
-      if (intent.service) {
-        setFilters((prev) => ({ ...prev, category: intent.service }));
+    try {
+      const result = await searchWorkersWithAI(query, currentContext, userLocationContext);
+
+      setAiIntent(result.intent);
+      setAiReplyMessage(result.replyMessage);
+
+      if (result.clarificationNeeded) {
+        setClarificationOptions(result.clarificationOptions || []);
+        setIsAiSearching(false);
+        return;
       }
-      const loc = intent.location;
-      if (loc && loc !== "current") {
-        setFilters((prev) => ({ ...prev, location: loc }));
+
+      setClarificationOptions(null);
+      setRankedResults(result.workers.map((w) => ({ worker: w, score: 0 })));
+      setUsingAiSearch(true);
+      setAiSummary(result.replyMessage);
+
+      // Multi-turn context update
+      const updatedContext: SessionContext = {
+        lastCategory: result.intent.canonicalCategory || undefined,
+        lastLocation: result.intent.extractedEntities.location || undefined,
+        lastUrgency: result.intent.extractedEntities.urgency || undefined,
+        lastBudget: result.intent.extractedEntities.budget || undefined,
+        language: result.intent.detectedLanguage,
+      };
+      setSessionContext(updatedContext);
+
+      // Sync manual filters so the user can easily review or adjust them
+      if (result.intent.canonicalCategory) {
+        setFilters((prev) => ({ ...prev, category: result.intent.canonicalCategory! }));
       }
-      if (intent.availability === "today") {
+      if (result.intent.extractedEntities.location) {
+        setFilters((prev) => ({ ...prev, location: result.intent.extractedEntities.location! }));
+      }
+      if (result.intent.extractedEntities.urgency === "immediate") {
         setFilters((prev) => ({ ...prev, availability: true }));
       }
-      const radiusKm = intent.radiusKm;
-      if (radiusKm) {
-        setFilters((prev) => ({ ...prev, maxDistance: radiusKm }));
+      if (result.intent.extractedEntities.budget) {
+        setFilters((prev) => ({ ...prev, priceRange: [0, result.intent.extractedEntities.budget!] }));
       }
 
-      const ranked = await defaultAIProvider.rankWorkers(allWorkers, intent);
-      setRankedResults(ranked.map((w) => ({ worker: w, score: 0 })));
-      setUsingAiSearch(true);
-
-      const summary = await defaultAIProvider.generateSummary(intent, ranked.length);
-      setAiSummary(summary);
-
-      if (ranked.length === 0) {
-        const suggestions = await defaultAIProvider.getNoResultSuggestions(intent);
-        setNoResultSuggestions(suggestions);
+      if (result.workers.length === 0) {
+        setNoResultSuggestions([
+          "Aas-paas ke shahar ya ilaaqe me dekhein",
+          "Kripya budget thoda badha kar dekhein",
+          "Manual filters se sabhi karigar dekhein",
+        ]);
       }
 
       if (!searchHistory.includes(query)) {
@@ -231,14 +294,14 @@ export default function SearchPage() {
         localStorage.setItem("kaamwalaSearchHistory", JSON.stringify(newHistory));
 
         if (user?.uid) {
-          persistSearchToFirestore(user.uid, query, ranked.length).catch(() => {});
+          persistSearchToFirestore(user.uid, query, result.workers.length).catch(() => {});
         }
       }
 
       trackSearchEvent({
         event: "search_completed",
         query,
-        resultCount: ranked.length,
+        resultCount: result.workers.length,
       });
     } catch {
       setSearchError("AI search encountered an issue. Showing all available workers.");
@@ -251,7 +314,50 @@ export default function SearchPage() {
     } finally {
       setIsAiSearching(false);
     }
-  }, [allWorkers, location, searchHistory, user]);
+  }, [location, sessionContext, searchHistory, user]);
+
+  const handleSelectClarification = (opt: ClarificationOption) => {
+    const updatedContext: SessionContext = {
+      ...sessionContext,
+      lastCategory: opt.category,
+    };
+    setSessionContext(updatedContext);
+    const updatedQuery = `${searchQuery ? searchQuery + " " : ""}${opt.label}`;
+    setSearchQuery(updatedQuery);
+    void performAiSearch(updatedQuery, updatedContext);
+  };
+
+  const handleClearEntity = (entityKey: "service" | "location" | "urgency" | "budget") => {
+    setSessionContext((prev) => {
+      const next = { ...prev };
+      if (entityKey === "service") next.lastCategory = undefined;
+      if (entityKey === "location") next.lastLocation = undefined;
+      if (entityKey === "urgency") next.lastUrgency = undefined;
+      if (entityKey === "budget") next.lastBudget = undefined;
+      return next;
+    });
+    if (aiIntent) {
+      setAiIntent((prev) => {
+        if (!prev) return null;
+        const nextEntities = { ...prev.extractedEntities };
+        if (entityKey === "service") {
+          nextEntities.service = null;
+        } else if (entityKey === "location") {
+          nextEntities.location = null;
+          nextEntities.coordinates = undefined;
+        } else if (entityKey === "urgency") {
+          nextEntities.urgency = "flexible";
+        } else if (entityKey === "budget") {
+          nextEntities.budget = null;
+        }
+        return {
+          ...prev,
+          canonicalCategory: entityKey === "service" ? null : prev.canonicalCategory,
+          extractedEntities: nextEntities,
+        };
+      });
+    }
+  };
 
   const handleFilterToggle = (filterId: string) => {
     setActiveFilters((prev) =>
@@ -295,13 +401,17 @@ export default function SearchPage() {
     setUsingAiSearch(false);
     setRankedResults([]);
     setAiSummary(null);
+    setAiIntent(null);
+    setAiReplyMessage(null);
+    setClarificationOptions(null);
+    setSessionContext({});
     setNoResultSuggestions([]);
     setSearchError(null);
   };
 
   const filteredWorkers = useMemo(() => filterWorkers(allWorkers, filters), [allWorkers, filters]);
 
-  const displayWorkers = usingAiSearch && rankedResults.length > 0
+  const displayWorkers = usingAiSearch
     ? rankedResults.map((r) => r.worker)
     : filteredWorkers;
 
@@ -317,6 +427,10 @@ export default function SearchPage() {
     setUsingAiSearch(false);
     setRankedResults([]);
     setAiSummary(null);
+    setAiIntent(null);
+    setAiReplyMessage(null);
+    setClarificationOptions(null);
+    setSessionContext({});
     setNoResultSuggestions([]);
   };
 
@@ -335,9 +449,18 @@ export default function SearchPage() {
           <div className="mb-6">
             <AiAssistantPanel
               query={searchQuery}
-              onSearch={performAiSearch}
+              onSearch={(q, ctx) => {
+                setSearchQuery(q);
+                void performAiSearch(q, ctx);
+              }}
               onClear={handleClearSearch}
               isSearching={isAiSearching}
+              extractedIntent={aiIntent}
+              replyMessage={aiReplyMessage}
+              clarificationOptions={clarificationOptions}
+              onSelectClarification={handleSelectClarification}
+              onClearEntity={handleClearEntity}
+              userCity={location?.city || location?.area}
             />
           </div>
 
@@ -473,12 +596,12 @@ export default function SearchPage() {
                 <motion.div
                   initial={{ opacity: 0, y: 20 }}
                   animate={{ opacity: 1, y: 0 }}
-                  className="text-center py-20 bg-white dark:bg-slate-800 rounded-3xl border border-slate-200 dark:border-slate-700"
+                  className="text-center py-20 bg-white dark:bg-slate-800 rounded-3xl border border-slate-200 dark:border-slate-700 p-8 max-w-xl mx-auto"
                 >
                   <AlertCircle className="w-16 h-16 text-text-muted mx-auto mb-4" />
-                  <h3 className="text-xl font-bold text-text mb-2">No workers found</h3>
+                  <h3 className="text-xl font-bold text-text mb-2">Koi worker uplabdh nahi hai</h3>
                   <p className="text-text-secondary mb-6 max-w-md mx-auto">
-                    {aiSummary || "No workers found matching your criteria."}
+                    {aiSummary || "No workers found matching your criteria. Try adjusting your filters or search terms."}
                   </p>
 
                   {noResultSuggestions.length > 0 && (
@@ -531,7 +654,7 @@ export default function SearchPage() {
                               Best Match
                             </motion.div>
                           )}
-                          <SearchWorkerCard worker={worker} index={index} />
+                          <WorkerCard worker={worker} index={index} />
                         </div>
                       );
                     })}

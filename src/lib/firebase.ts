@@ -1,4 +1,4 @@
-import { initializeApp, getApps, FirebaseApp } from "firebase/app";
+import { initializeApp, getApp, getApps, FirebaseApp } from "firebase/app";
 import {
   getAuth,
   GoogleAuthProvider,
@@ -40,9 +40,14 @@ let _googleProvider: GoogleAuthProvider | null = null;
 
 const firebaseReady = hasValidFirebaseConfig();
 
-if (typeof window !== "undefined" && firebaseReady && !getApps().length) {
+// Firebase must only be initialized in the browser (the client SDK relies on
+// browser APIs), and it must only ever be initialized ONCE per page. If the app
+// already exists (module re-evaluation during HMR, or another import path having
+// initialized it first) we reuse it instead of leaving auth/db null.
+if (typeof window !== "undefined" && firebaseReady) {
   try {
-    firebaseApp = initializeApp(firebaseConfig);
+    const alreadyInitialized = getApps().length > 0;
+    firebaseApp = alreadyInitialized ? getApp() : initializeApp(firebaseConfig);
     _auth = getAuth(firebaseApp);
     _db = getFirestore(firebaseApp);
     _storage = getStorage(firebaseApp);
@@ -50,6 +55,7 @@ if (typeof window !== "undefined" && firebaseReady && !getApps().length) {
     console.log("[Firebase] Initialized successfully", {
       projectId: firebaseConfig.projectId,
       authDomain: firebaseConfig.authDomain,
+      reusedExistingApp: alreadyInitialized,
     });
   } catch (err) {
     console.error("[Firebase] Initialization failed:", err);

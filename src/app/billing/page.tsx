@@ -5,21 +5,20 @@ import { useRouter } from "next/navigation";
 import Navbar from "@/components/sections/Navbar";
 import Footer from "@/components/sections/Footer";
 import { motion } from "framer-motion";
-import Button from "@/components/ui/Button";
 import Badge from "@/components/ui/Badge";
-import { AlertCircle, CheckCircle2, Crown, History, Unlock, CreditCard } from "lucide-react";
+import { Crown, History, Unlock } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import {
   getMembershipByUserId,
   getTransactionsByUserId,
-  getAllContactUnlocks,
+  getContactUnlocksByCustomerId,
 } from "@/services/monetizationService";
 import { MembershipWithId, TransactionWithId, ContactUnlockWithId } from "@/types/monetization";
 import TransactionTable from "@/components/monetization/TransactionTable";
 
 export default function BillingPage() {
   const router = useRouter();
-  const { user, loading: authLoading, role } = useAuth();
+  const { user, loading: authLoading } = useAuth();
   const [membership, setMembership] = useState<MembershipWithId | null>(null);
   const [transactions, setTransactions] = useState<TransactionWithId[]>([]);
   const [unlocks, setUnlocks] = useState<ContactUnlockWithId[]>([]);
@@ -40,7 +39,7 @@ export default function BillingPage() {
       const [membershipResult, transactionsResult, unlocksResult] = await Promise.all([
         getMembershipByUserId(user.uid),
         getTransactionsByUserId(user.uid),
-        getAllContactUnlocks(),
+        getContactUnlocksByCustomerId(user.uid),
       ]);
 
       if (membershipResult.membership) {
@@ -56,9 +55,6 @@ export default function BillingPage() {
     };
     fetchData();
   }, [user]);
-
-  const membershipTransactions = transactions.filter((t) => t.type === "customer_membership");
-  const unlockTransactions = transactions.filter((t) => t.type === "customer_contact_unlock");
 
   if (authLoading || !user) {
     return (

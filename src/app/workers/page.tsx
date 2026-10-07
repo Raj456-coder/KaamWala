@@ -1,65 +1,72 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useRef } from "react";
 import Navbar from "@/components/sections/Navbar";
 import Footer from "@/components/sections/Footer";
-import SearchWorkerCard from "@/components/search/WorkerCard";
+import WorkerCard from "@/components/workers/WorkerCard";
 import { WorkerCardSkeleton } from "@/components/ui/LoadingSkeleton";
 import { QueryDocumentSnapshot } from "firebase/firestore";
 import { searchWorkers, mapWorkerDocsToProfiles } from "@/services/firestoreService";
-import { getDemoWorkers } from "@/services/demoService";
 import { WorkerProfile } from "@/types";
 import Button from "@/components/ui/Button";
-import { Loader2 } from "lucide-react";
+import { Loader2, AlertCircle } from "lucide-react";
 
 export default function WorkersPage() {
   const [workers, setWorkers] = useState<WorkerProfile[]>([]);
   const [loading, setLoading] = useState(true);
-  const [hasMore, setHasMore] = useState(true);
+  const [hasMore, setHasMore] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
-  const [cursor, setCursor] = useState<QueryDocumentSnapshot | undefined>(undefined);
-
-  const fetchWorkers = useCallback(async (reset = false) => {
-    if (reset) {
-      setLoading(true);
-      setWorkers([]);
-      setCursor(undefined);
-    } else {
-      setLoadingMore(true);
-    }
-
-    const params = {
-      limit: 12,
-      cursor: reset ? undefined : cursor,
-      sortBy: "rating" as const,
-      verifiedOnly: true,
-    };
-
-    const { workers: fetchedWorkers, hasMore: more, lastDoc: newCursor, error } = await searchWorkers(params);
-
-    if (!error && fetchedWorkers.length > 0) {
-      const profiles = await mapWorkerDocsToProfiles(fetchedWorkers);
-       setWorkers((prev) => reset ? profiles : [...prev, ...profiles]);
-      setCursor(newCursor ?? undefined);
-      setHasMore(more && fetchedWorkers.length === 12);
-    } else if (reset) {
-      const { workers: demoWorkers } = await getDemoWorkers(12);
-      setWorkers(demoWorkers);
-      setHasMore(false);
-    }
-
-    setLoading(false);
-    setLoadingMore(false);
-  }, [cursor]);
+  const cursorRef = useRef<QueryDocumentSnapshot | null>(null);
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    fetchWorkers(true);
-  }, [fetchWorkers]);
+    let active = true;
+    const loadInitialWorkers = async () => {
+      setLoading(true);
+      cursorRef.current = null;
+      const { workers: fetchedWorkers, hasMore: more, lastDoc, error } = await searchWorkers({
+        limit: 12,
+        sortBy: "rating",
+      });
 
-  const handleLoadMore = () => {
-    if (!hasMore || loadingMore) return;
-    fetchWorkers(false);
+      if (active) {
+        if (!error && fetchedWorkers.length > 0) {
+          const profiles = mapWorkerDocsToProfiles(fetchedWorkers);
+          setWorkers(profiles);
+          cursorRef.current = lastDoc;
+          setHasMore(more);
+        } else {
+          setWorkers([]);
+          setHasMore(false);
+        }
+        setLoading(false);
+      }
+    };
+
+    loadInitialWorkers();
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const handleLoadMore = async () => {
+    if (!hasMore || loadingMore || !cursorRef.current) return;
+    setLoadingMore(true);
+
+    const { workers: fetchedWorkers, hasMore: more, lastDoc, error } = await searchWorkers({
+      limit: 12,
+      cursor: cursorRef.current,
+      sortBy: "rating",
+    });
+
+    if (!error && fetchedWorkers.length > 0) {
+      const profiles = mapWorkerDocsToProfiles(fetchedWorkers);
+      setWorkers((prev) => [...prev, ...profiles]);
+      cursorRef.current = lastDoc;
+      setHasMore(more);
+    } else {
+      setHasMore(false);
+    }
+    setLoadingMore(false);
   };
 
   return (
@@ -79,14 +86,16 @@ export default function WorkersPage() {
               ))}
             </div>
           ) : workers.length === 0 ? (
-            <div className="text-center py-20">
-              <p className="text-xl text-text-secondary mb-4">No workers found.</p>
+            <div className="text-center py-20 bg-white dark:bg-slate-800 rounded-3xl border border-slate-200 dark:border-slate-700 p-8 max-w-md mx-auto">
+              <AlertCircle className="w-12 h-12 text-text-muted mx-auto mb-4" />
+              <h3 className="text-xl font-bold text-text mb-2">Koi worker uplabdh nahi hai</h3>
+              <p className="text-text-secondary">No workers available at the moment. Please check back later.</p>
             </div>
           ) : (
             <>
               <div className="grid sm:grid-cols-2 xl:grid-cols-3 gap-6">
                 {workers.map((worker, index) => (
-                  <SearchWorkerCard key={worker.id} worker={worker} index={index} />
+                  <WorkerCard key={worker.id} worker={worker} index={index} />
                 ))}
               </div>
 

@@ -138,7 +138,8 @@ export default function BookingDialog({
         name: user.displayName || user.email || "Customer",
         description: `Advance payment for ${formData.service} booking`,
         orderId: orderId,
-        onSuccess: async (response: { razorpay_payment_id: string; razorpay_order_id: string }) => {
+        customerId: user.uid,
+        onSuccess: async (response) => {
           const paymentRecord: PaymentRecord = {
             id: response.razorpay_payment_id,
             bookingId: createdBookingId || "",

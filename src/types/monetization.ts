@@ -71,6 +71,7 @@ export interface ContactUnlockDoc {
   status: ContactUnlockStatus;
   paymentId?: string;
   orderId?: string;
+  workerPhone?: string;
   unlockedAt?: Date;
   createdAt: Date;
   updatedAt: Date;

@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import Link from "next/link";
 import { Star, MapPin, Clock } from "lucide-react";
-import SearchWorkerCard from "@/components/search/WorkerCard";
+import WorkerCard from "@/components/workers/WorkerCard";
 import { WorkerCardSkeleton } from "@/components/ui/LoadingSkeleton";
 import { searchWorkers, mapWorkerDocsToProfiles } from "@/services/firestoreService";
 import { rankWorkers, rankWorkersByRecency } from "@/services/aiSearchService";
@@ -58,7 +58,7 @@ function RecommendationSection({ title, subtitle, workers, icon, loading, badge 
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
         {workers.map((worker, index) => (
-          <SearchWorkerCard key={worker.id} worker={worker} index={index} />
+          <WorkerCard key={worker.id} worker={worker} index={index} />
         ))}
       </div>
     </div>

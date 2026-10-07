@@ -1,6 +1,10 @@
 "use client";
 
 import { WorkerProfile } from "@/types";
+import { ExtractedIntent, ClarificationOption, SessionContext } from "@/lib/ai/types";
+import { extractIntent } from "@/lib/ai/intentExtractor";
+import { searchNearbyWorkers, searchWorkers, mapWorkerDocsToProfiles } from "@/services/firestoreService";
+import { Coordinates, getCityCoordinates } from "@/lib/location";
 
 export interface ParsedQuery {
   category: string | null;
@@ -218,3 +222,188 @@ export const AI_SUGGESTIONS = [
   "Top picks near you",
   "Recently active workers",
 ];
+
+export interface AISearchResult {
+  workers: WorkerProfile[];
+  intent: ExtractedIntent;
+  replyMessage: string;
+  clarificationNeeded: boolean;
+  clarificationOptions?: ClarificationOption[];
+  totalMatches: number;
+}
+
+export async function searchWorkersWithAI(
+  query: string,
+  sessionContext?: SessionContext,
+  userLocationContext?: {
+    latitude?: number;
+    longitude?: number;
+    city?: string;
+  }
+): Promise<AISearchResult> {
+  let intent: ExtractedIntent;
+
+  try {
+    const res = await fetch("/api/ai/intent", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        query,
+        context: sessionContext,
+        userLocation: userLocationContext,
+      }),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      intent = data.intent;
+    } else {
+      intent = extractIntent(query, sessionContext);
+    }
+  } catch {
+    intent = extractIntent(query, sessionContext);
+  }
+
+  // Ambiguity clarification check
+  if (intent.intent === "clarification_needed" || intent.clarificationNeeded) {
+    return {
+      workers: [],
+      intent,
+      replyMessage: intent.replyMessage || "Kripya batayein aapko kis tarah ki service chahiye?",
+      clarificationNeeded: true,
+      clarificationOptions: intent.clarificationOptions || [],
+      totalMatches: 0,
+    };
+  }
+
+  // Location resolution
+  let coords: Coordinates | null = intent.extractedEntities.coordinates || null;
+  const searchCity = intent.extractedEntities.location || userLocationContext?.city;
+
+  if (!coords && searchCity) {
+    coords = getCityCoordinates(searchCity);
+  }
+  if (!coords && userLocationContext?.latitude && userLocationContext?.longitude) {
+    coords = {
+      latitude: userLocationContext.latitude,
+      longitude: userLocationContext.longitude,
+    };
+  }
+
+  const category = intent.canonicalCategory || undefined;
+  const isAvailableOnly = intent.extractedEntities.urgency === "immediate";
+  const budget = intent.extractedEntities.budget;
+
+  let profiles: WorkerProfile[] = [];
+
+  // 1. Try geo search if coordinates available
+  if (coords) {
+    const { workers, error } = await searchNearbyWorkers({
+      latitude: coords.latitude,
+      longitude: coords.longitude,
+      radiusKm: 35,
+      category,
+      isAvailable: isAvailableOnly ? true : undefined,
+      limit: 60,
+    });
+
+    if (!error && workers.length > 0) {
+      profiles = mapWorkerDocsToProfiles(workers, coords);
+    }
+  }
+
+  // 2. Fallback to standard category search if geo search returned 0 or no coords
+  if (profiles.length === 0) {
+    const { workers } = await searchWorkers({
+      category,
+      isAvailable: isAvailableOnly ? true : undefined,
+      limit: 60,
+    });
+    if (workers && workers.length > 0) {
+      profiles = mapWorkerDocsToProfiles(workers, coords || undefined);
+    }
+  }
+
+  // 3. Filter by city if city was specified and coordinates didn't already constrain it
+  if (searchCity && profiles.length > 0) {
+    const cityNorm = searchCity.toLowerCase();
+    const cityFiltered = profiles.filter((p) => {
+      const wCity = (p.location || "").toLowerCase();
+      return wCity.includes(cityNorm) || cityNorm.includes(wCity);
+    });
+    // If exact city matches exist, use them
+    if (cityFiltered.length > 0) {
+      profiles = cityFiltered;
+    }
+  }
+
+  // 4. Rank workers
+  profiles.sort((a, b) => {
+    let scoreA = 0;
+    let scoreB = 0;
+
+    // Budget matching
+    if (budget) {
+      if (a.hourlyRate > 0 && a.hourlyRate <= budget) scoreA += 30;
+      if (b.hourlyRate > 0 && b.hourlyRate <= budget) scoreB += 30;
+    }
+
+    // Availability
+    if (a.isAvailable) scoreA += 20;
+    if (b.isAvailable) scoreB += 20;
+
+    // Rating & Experience
+    scoreA += (a.rating || 0) * 10;
+    scoreB += (b.rating || 0) * 10;
+    scoreA += Math.min(a.experience || 0, 15) * 2;
+    scoreB += Math.min(b.experience || 0, 15) * 2;
+
+    // Verified
+    if (a.isVerified) scoreA += 15;
+    if (b.isVerified) scoreB += 15;
+
+    // Distance if present
+    if (a.distance && b.distance) {
+      const distA = parseFloat(a.distance);
+      const distB = parseFloat(b.distance);
+      if (!isNaN(distA) && !isNaN(distB)) {
+        scoreA += Math.max(0, 30 - distA);
+        scoreB += Math.max(0, 30 - distB);
+      }
+    }
+
+    return scoreB - scoreA;
+  });
+
+  // Compose dynamic natural reply message
+  let replyMessage = intent.replyMessage;
+  const count = profiles.length;
+  const serviceName = intent.serviceName || "service";
+  const locDisplay = searchCity || "aapke ilaqe";
+
+  if (count > 0) {
+    if (intent.detectedLanguage === "hi") {
+      replyMessage = `हमे ${locDisplay} में ${count} सत्यापित ${serviceName} मिले हैं। सबसे बेहतरीन विकल्प नीचे दिखाए गए हैं।`;
+    } else if (intent.detectedLanguage === "hinglish") {
+      replyMessage = `Humein ${locDisplay} me ${count} verified ${serviceName}s mile hain. Sabse kareeb aur top-rated workers neeche hain.`;
+    } else {
+      replyMessage = `Found ${count} verified ${serviceName}(s) in ${locDisplay}. Top available workers are listed below.`;
+    }
+  } else {
+    if (intent.detectedLanguage === "hi") {
+      replyMessage = `माफ़ कीजिए, ${locDisplay} में अभी कोई ${serviceName} उपलब्ध नहीं है। कृपया कोई अन्य लोकेशन या सर्विस देखें।`;
+    } else if (intent.detectedLanguage === "hinglish") {
+      replyMessage = `Maaf kijiye, ${locDisplay} me abhi koi verified ${serviceName} uplabdh nahi hai. Kripya doosri location chunein ya manual filters use karein.`;
+    } else {
+      replyMessage = `Sorry, no verified ${serviceName} found in ${locDisplay} right now. Please try nearby areas or adjust filters.`;
+    }
+  }
+
+  return {
+    workers: profiles,
+    intent,
+    replyMessage,
+    clarificationNeeded: false,
+    totalMatches: profiles.length,
+  };
+}
+
