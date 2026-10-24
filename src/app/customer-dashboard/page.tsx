@@ -21,6 +21,9 @@ import {
   CreditCard,
   Crown,
   Phone,
+  Wallet,
+  KeyRound,
+  ExternalLink,
 } from "lucide-react";
 import Navbar from "@/components/sections/Navbar";
 import Footer from "@/components/sections/Footer";
@@ -32,13 +35,15 @@ import BookingDialog from "@/components/booking/BookingDialog";
 import ReviewDialog from "@/components/booking/ReviewDialog";
 import { useAuth } from "@/hooks/useAuth";
 import Link from "next/link";
-import { getBookingsByCustomer } from "@/services/bookingService";
+import { getBookingsByCustomer, cancelBookingWithRefund } from "@/services/bookingService";
 import { getPaymentsByCustomer } from "@/services/paymentService";
 import { getSavedWorkers, removeSavedWorker } from "@/services/firestoreService";
 import { getReviewsByBooking } from "@/services/bookingService";
 import { createNotification } from "@/services/notificationService";
 import { updateBookingStatus } from "@/services/bookingService";
 import { getMembershipByUserId, getCustomerFreeContactCount } from "@/services/monetizationService";
+import { db } from "@/lib/firebase";
+import { doc, getDoc } from "firebase/firestore";
 import { BookingDoc, ReviewDoc } from "@/types/firestore";
 import { FirestoreWorker } from "@/services/firestoreService";
 import { TransactionWithId } from "@/types/monetization";
@@ -75,11 +80,23 @@ function BookingCard({
     >
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-3 mb-2">
+          <div className="flex items-center gap-3 mb-2 flex-wrap">
             <h4 className="font-semibold text-text truncate">
               {booking.service}
             </h4>
             <BookingStatusBadge status={booking.status} />
+            {booking.startOtp && booking.status !== "completed" && booking.status !== "cancelled" && (
+              <span className="flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-mono font-bold bg-amber-500/15 border border-amber-500/30 text-amber-700 dark:text-amber-300">
+                <KeyRound className="w-3.5 h-3.5" />
+                OTP: {booking.startOtp}
+              </span>
+            )}
+            {booking.refundStatus === "credited_to_wallet" && (
+              <span className="flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-emerald-500/15 text-emerald-600 dark:text-emerald-400">
+                <Wallet className="w-3 h-3" />
+                ₹5 Refunded to Wallet
+              </span>
+            )}
           </div>
 
           <div className="flex flex-wrap items-center gap-4 text-sm text-text-muted">
@@ -143,26 +160,26 @@ function WorkerCard({
         <div
           className="w-12 h-12 rounded-2xl flex-shrink-0 bg-cover bg-center bg-gradient-to-br from-slate-200 to-slate-300 dark:from-slate-700 dark:to-slate-600"
           style={
-            worker.photoURL
+            worker?.photoURL
               ? { backgroundImage: `url(${worker.photoURL})` }
               : undefined
           }
         >
-          {!worker.photoURL && (
+          {!worker?.photoURL && (
             <div className="w-full h-full flex items-center justify-center text-slate-500 dark:text-slate-400 text-lg font-bold">
-              {worker.name.split(" ").map((n) => n[0]).join("")}
+              {worker?.name ? worker.name.split(" ").map((n) => n[0]).join("") : "W"}
             </div>
           )}
         </div>
         <div>
-          <p className="font-semibold text-text">{worker.name}</p>
+          <p className="font-semibold text-text">{worker?.name || "Service Provider"}</p>
           <p className="text-sm text-text-muted">
-            {worker.professionalInfo?.category || worker.professionalInfo?.profession || ""}
+            {worker?.professionalInfo?.category || worker?.professionalInfo?.profession || "Not Provided"}
           </p>
           <div className="flex items-center gap-1 mt-0.5">
             <Star className="w-3.5 h-3.5 text-warning fill-warning" />
             <span className="text-sm text-text-muted">
-              {worker.rating?.toFixed(1) || "N/A"}
+              {worker?.rating?.toFixed(1) || "N/A"}
             </span>
           </div>
         </div>
@@ -198,6 +215,7 @@ export default function CustomerDashboard() {
   const [selectedBooking, setSelectedBooking] = useState<BookingDoc | null>(null);
   const [membership, setMembership] = useState<{ planId: string; status: string } | null>(null);
   const [freeContactCount, setFreeContactCount] = useState(0);
+  const [walletBalance, setWalletBalance] = useState<number>(0);
 
   useEffect(() => {
     if (!authLoading && !user) {
@@ -250,6 +268,23 @@ export default function CustomerDashboard() {
         setSavedWorkers(savedWorkersResult.workers);
       }
 
+      // Fetch customer wallet balance from Firestore
+      if (db) {
+        try {
+          const userSnap = await getDoc(doc(db, "users", user.uid));
+          if (userSnap.exists()) {
+            setWalletBalance(userSnap.data()?.walletBalance ?? 0);
+          } else {
+            const custSnap = await getDoc(doc(db, "customers", user.uid));
+            if (custSnap.exists()) {
+              setWalletBalance(custSnap.data()?.walletBalance ?? 0);
+            }
+          }
+        } catch {
+          // Ignore
+        }
+      }
+
       const completedBookings = bookingsResult.bookings.filter(
         (b) => b.status === "completed"
       );
@@ -285,29 +320,39 @@ export default function CustomerDashboard() {
   };
 
   const handleCancelBooking = async (bookingId: string) => {
+    if (!user) return;
+    if (
+      !window.confirm(
+        "Cancel this booking? If cancelled within 10 minutes of booking, a ₹5 refund will be credited directly to your KaamWala Wallet."
+      )
+    ) {
+      return;
+    }
     setActionLoading(bookingId);
     setError(null);
     try {
-      const { error } = await updateBookingStatus(bookingId, "cancelled");
-      if (error) {
-        setError(error);
+      const res = await cancelBookingWithRefund(bookingId, user.uid);
+      if (res.error) {
+        setError(res.error);
         setActionLoading(null);
         return;
       }
 
-      const booking = bookings.find((b) => b.id === bookingId);
-      if (booking?.workerId) {
-        await createNotification(
-          booking.workerId,
-          "booking_cancelled",
-          "Booking Cancelled",
-          `Your booking for ${booking.service} has been cancelled by the customer.`,
-          bookingId
-        );
+      if (res.refundAmount > 0) {
+        setWalletBalance((prev) => prev + res.refundAmount);
       }
 
       setBookings((prev) =>
-        prev.map((b) => (b.id === bookingId ? { ...b, status: "cancelled" as const } : b))
+        prev.map((b) =>
+          b.id === bookingId
+            ? {
+                ...b,
+                status: "cancelled" as const,
+                cancellationRefund: res.refundAmount,
+                refundStatus: res.refundAmount > 0 ? "credited_to_wallet" : "no_refund_after_10min",
+              }
+            : b
+        )
       );
     } catch {
       setError("Failed to cancel booking.");
@@ -350,10 +395,18 @@ export default function CustomerDashboard() {
   );
   const completedBookings = bookings.filter((b) => b.status === "completed");
   const cancelledBookings = bookings.filter((b) => b.status === "cancelled");
+  const getBookingTime = (val: any) => {
+    if (!val) return 0;
+    if (val?.seconds) return val.seconds * 1000;
+    if (typeof val?.toDate === "function") return val.toDate().getTime();
+    const d = new Date(val);
+    return isNaN(d.getTime()) ? 0 : d.getTime();
+  };
+
   const bookingHistory = [...completedBookings, ...cancelledBookings].sort(
     (a, b) =>
-      new Date(b.updatedAt || b.createdAt).getTime() -
-      new Date(a.updatedAt || a.createdAt).getTime()
+      getBookingTime(b?.updatedAt || b?.createdAt) -
+      getBookingTime(a?.updatedAt || a?.createdAt)
   );
 
   if (authLoading || loading) {
@@ -426,6 +479,36 @@ export default function CustomerDashboard() {
               </Button>
             </motion.div>
           )}
+
+          {/* KaamWala Wallet */}
+          <motion.div
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="bg-gradient-to-br from-emerald-500/10 via-surface to-emerald-500/5 rounded-2xl p-6 border border-emerald-500/30 shadow-sm"
+          >
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <div className="w-12 h-12 bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 rounded-2xl flex items-center justify-center flex-shrink-0">
+                  <Wallet className="w-6 h-6" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="font-bold text-text text-base">KaamWala Wallet</h3>
+                    <Badge variant="success">Active</Badge>
+                  </div>
+                  <p className="text-xs text-text-secondary mt-0.5">
+                    Automatic ₹5 platform fee refunds for cancellations made within 10 minutes.
+                  </p>
+                </div>
+              </div>
+              <div className="text-left sm:text-right">
+                <p className="text-xs text-text-muted">Available Balance</p>
+                <p className="text-2xl font-extrabold text-emerald-600 dark:text-emerald-400 font-mono">
+                  {formatCurrency(walletBalance)}
+                </p>
+              </div>
+            </div>
+          </motion.div>
 
           {/* Membership Status */}
           {membership && (
@@ -513,17 +596,26 @@ export default function CustomerDashboard() {
                     key={booking.id}
                     booking={booking}
                     actions={
-                      booking.status === "pending" ? (
-                        <Button
-                          variant="danger"
-                          size="sm"
-                          onClick={() => handleCancelBooking(booking.id)}
-                          isLoading={actionLoading === booking.id}
-                          leftIcon={<XCircle className="w-4 h-4" />}
-                        >
-                          Cancel
-                        </Button>
-                      ) : undefined
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <Link href={`/bookings/${booking.id}`}>
+                          <Button variant="outline" size="sm" leftIcon={<ExternalLink className="w-4 h-4" />}>
+                            Details
+                          </Button>
+                        </Link>
+                        {(booking.status === "pending" ||
+                          booking.status === "accepted" ||
+                          booking.status === "confirmed") && (
+                          <Button
+                            variant="danger"
+                            size="sm"
+                            onClick={() => handleCancelBooking(booking.id)}
+                            isLoading={actionLoading === booking.id}
+                            leftIcon={<XCircle className="w-4 h-4" />}
+                          >
+                            Cancel
+                          </Button>
+                        )}
+                      </div>
                     }
                   />
                 ))}

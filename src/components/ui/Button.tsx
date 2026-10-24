@@ -4,6 +4,7 @@ import { motion } from "framer-motion";
 import { cn } from "@/lib/utils";
 
 type ButtonProps = {
+  id?: string;
   variant?: "primary" | "secondary" | "outline" | "ghost" | "danger";
   size?: "sm" | "md" | "lg";
   isLoading?: boolean;
@@ -13,10 +14,11 @@ type ButtonProps = {
   children?: React.ReactNode;
   disabled?: boolean;
   type?: "button" | "submit" | "reset";
-  onClick?: () => void;
+  onClick?: (e: React.MouseEvent<HTMLButtonElement>) => void;
 };
 
 export default function Button({
+  id,
   variant = "primary",
   size = "md",
   isLoading = false,
@@ -52,6 +54,7 @@ export default function Button({
 
   return (
     <motion.button
+      id={id}
       whileHover={!disabled && !isLoading ? { scale: 1.02 } : {}}
       whileTap={!disabled && !isLoading ? { scale: 0.98 } : {}}
       className={cn(baseStyles, variants[variant], sizes[size], className)}
@@ -60,7 +63,10 @@ export default function Button({
       onClick={onClick}
     >
       {isLoading ? (
-        <span className="w-5 h-5 border-2 border-current border-t-transparent rounded-full animate-spin" />
+        <span className="inline-flex items-center gap-2">
+          <span className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin flex-shrink-0" />
+          {children && <span>{children}</span>}
+        </span>
       ) : (
         <>
           {leftIcon && <span className="flex-shrink-0">{leftIcon}</span>}

@@ -111,7 +111,15 @@ export async function POST(request: NextRequest) {
         return { type: "worker_not_found" };
       }
 
-      const rawPhone = workerData?.personalInfo?.phone || workerData?.phone || "";
+      let rawPhone = workerData?.personalInfo?.phone || workerData?.phone || "";
+      if (!rawPhone) {
+        const privateDocRef = adminDb.collection("worker_private").doc(workerId);
+        const privateDocSnap = await transaction.get(privateDocRef);
+        if (privateDocSnap.exists) {
+          rawPhone = privateDocSnap.data()?.phoneNumber || "";
+        }
+      }
+
       if (!rawPhone) {
         return { type: "no_phone" };
       }

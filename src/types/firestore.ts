@@ -12,6 +12,17 @@ export interface FirestoreUser {
   updatedAt: Date;
 }
 
+export interface CustomerAddress {
+  id: string;
+  label: "Home" | "Work" | "Other" | string;
+  address: string;
+  landmark?: string;
+  city?: string;
+  pincode?: string;
+  latitude?: number;
+  longitude?: number;
+}
+
 export interface CustomerDoc {
   uid: string;
   email: string;
@@ -22,6 +33,8 @@ export interface CustomerDoc {
   bookings: string[];
   savedWorkers: string[];
   reviewsGiven: string[];
+  walletBalance?: number;
+  savedAddresses?: CustomerAddress[];
   createdAt: Date;
   updatedAt: Date;
 }
@@ -147,6 +160,27 @@ export interface BookingDoc {
   totalAmount: number;
   amount: number;
   earnings?: number;
+  platformFee?: number;
+  startOtp?: string;
+  otpGeneratedAt?: Date | string;
+  otpVerifiedAt?: Date | string;
+  cancellationRefund?: number;
+  refundStatus?: "credited_to_wallet" | "no_refund_after_10min" | "none";
+  isBroadcast?: boolean;
+  broadcastedWorkerIds?: string[];
+  coordinates?: {
+    latitude: number;
+    longitude: number;
+  };
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface WorkerScheduleDoc {
+  id: string;
+  workerId: string;
+  date: string; // YYYY-MM-DD
+  bookedSlots: string[]; // e.g. ["09:00", "09:30", "14:00"]
   createdAt: Date;
   updatedAt: Date;
 }
@@ -198,6 +232,7 @@ export interface CityDoc {
 export type NotificationType =
   | "booking_created"
   | "booking_accepted"
+  | "booking_started"
   | "booking_rejected"
   | "booking_cancelled"
   | "booking_completed"

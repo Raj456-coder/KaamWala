@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { ThemeProvider } from "@/context/ThemeContext";
 import { AuthProvider } from "@/context/AuthContext";
 import ServiceWorkerRegister from "@/components/layout/ServiceWorkerRegister";
+import SplashScreen from "@/components/SplashScreen";
 import "@fontsource/inter/400.css";
 import "@fontsource/inter/500.css";
 import "@fontsource/inter/600.css";
@@ -52,11 +53,20 @@ export default function RootLayout({
     <html
       lang="en"
       className="h-full antialiased"
+      suppressHydrationWarning
     >
+      <head>
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `(function(){try{if(sessionStorage.getItem('kaamwala_splash_shown')&&!window.location.search.includes('splash=true')){document.documentElement.classList.add('splash-hidden');}}catch(e){}})();`,
+          }}
+        />
+      </head>
       <body className="min-h-full flex flex-col bg-background text-text">
         <ThemeProvider>
           <AuthProvider>
             <ServiceWorkerRegister />
+            <SplashScreen />
             {children}
           </AuthProvider>
         </ThemeProvider>

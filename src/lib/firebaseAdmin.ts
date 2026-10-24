@@ -1,4 +1,4 @@
-import { initializeApp, cert, getApps, getApp, App } from "firebase-admin/app";
+import { initializeApp, cert, applicationDefault, getApps, getApp, App } from "firebase-admin/app";
 import { getFirestore, Firestore } from "firebase-admin/firestore";
 import { getAuth, Auth } from "firebase-admin/auth";
 
@@ -76,10 +76,18 @@ export function initAdmin(): App {
     return adminApp;
   }
 
-  adminApp = initializeApp({
-    projectId: projectId || "kaamwala-19",
-  });
-  return adminApp;
+  try {
+    adminApp = initializeApp({
+      credential: applicationDefault(),
+      projectId: projectId || "kaamwala-19",
+    });
+    return adminApp;
+  } catch {
+    adminApp = initializeApp({
+      projectId: projectId || "kaamwala-19",
+    });
+    return adminApp;
+  }
 }
 
 export function getAdminDb(): Firestore {

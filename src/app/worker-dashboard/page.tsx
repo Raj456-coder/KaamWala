@@ -17,6 +17,10 @@ import {
   RefreshCw,
   Zap,
   ShieldCheck,
+  Radio,
+  KeyRound,
+  AlertTriangle,
+  ExternalLink,
 } from "lucide-react";
 import Navbar from "@/components/sections/Navbar";
 import Footer from "@/components/sections/Footer";
@@ -25,7 +29,13 @@ import Badge from "@/components/ui/Badge";
 import { WorkerCardSkeleton } from "@/components/ui/LoadingSkeleton";
 import BookingStatusBadge from "@/components/booking/BookingStatusBadge";
 import { useAuth } from "@/hooks/useAuth";
-import { getBookingsByWorker, updateBookingStatus } from "@/services/bookingService";
+import {
+  getBookingsByWorker,
+  updateBookingStatus,
+  getBroadcastBookingsForWorker,
+  acceptBroadcastBooking,
+  verifyBookingOtp,
+} from "@/services/bookingService";
 import { getWorkerById, updateWorkerAvailability } from "@/services/firestoreService";
 import { getSubscriptionByUserId, hasActiveWorkerSubscription, getTrialDaysRemaining } from "@/services/monetizationService";
 import { SubscriptionWithId } from "@/types/monetization";
@@ -126,6 +136,10 @@ export default function WorkerDashboard() {
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [subscription, setSubscription] = useState<SubscriptionWithId | null>(null);
+  const [broadcasts, setBroadcasts] = useState<BookingDoc[]>([]);
+  const [otpInputs, setOtpInputs] = useState<Record<string, string>>({});
+  const [otpErrors, setOtpErrors] = useState<Record<string, string>>({});
+  const [otpSuccesses, setOtpSuccesses] = useState<Record<string, string>>({});
 
   useEffect(() => {
     if (!authLoading && !user) {
@@ -150,20 +164,37 @@ export default function WorkerDashboard() {
         getSubscriptionByUserId(user.uid),
       ]);
 
+      let currentWorker: WorkerDoc | null = null;
+      if (workerResult.error) {
+        setWorker(null);
+      } else if (workerResult.worker) {
+        currentWorker = workerResult.worker;
+        setWorker(workerResult.worker);
+      }
+
       if (bookingsResult.error) {
         setError(bookingsResult.error);
       } else {
         setBookings(bookingsResult.bookings);
       }
 
-      if (workerResult.error) {
-        setWorker(null);
-      } else if (workerResult.worker) {
-        setWorker(workerResult.worker);
-      }
-
       if (subscriptionResult.subscription) {
         setSubscription(subscriptionResult.subscription);
+      }
+
+      // Query 5km broadcast bookings matching worker's profession / category
+      const category = currentWorker?.professionalInfo?.category || currentWorker?.professionalInfo?.profession;
+      const coords =
+        currentWorker?.serviceArea?.latitude && currentWorker?.serviceArea?.longitude
+          ? {
+              latitude: currentWorker.serviceArea.latitude,
+              longitude: currentWorker.serviceArea.longitude,
+            }
+          : undefined;
+
+      const broadcastRes = await getBroadcastBookingsForWorker(user.uid, category, coords);
+      if (!broadcastRes.error) {
+        setBroadcasts(broadcastRes.bookings.filter((b) => b.workerId !== user.uid));
       }
     } catch {
       setError("Failed to load dashboard data.");
@@ -294,6 +325,59 @@ export default function WorkerDashboard() {
     } finally {
       setActionLoading(null);
     }
+  };
+
+  const handleAcceptBroadcast = async (broadcastBooking: BookingDoc) => {
+    if (!user || actionLoading) return;
+    setActionLoading(broadcastBooking.id);
+    const workerName = worker?.personalInfo?.fullName || user.displayName || "Worker";
+    const workerPhoto = worker?.documents?.profilePhoto;
+    const workerImage =
+      typeof workerPhoto === "string"
+        ? workerPhoto
+        : typeof workerPhoto === "object" && workerPhoto !== null && "url" in workerPhoto
+        ? (workerPhoto as { url: string }).url
+        : user.photoURL || "";
+
+    const res = await acceptBroadcastBooking(broadcastBooking.id, user.uid, workerName, workerImage);
+    if (res.error) {
+      setError(res.error);
+    } else {
+      setBroadcasts((prev) => prev.filter((b) => b.id !== broadcastBooking.id));
+      fetchData();
+    }
+    setActionLoading(null);
+  };
+
+  const handleDeclineBroadcast = (bookingId: string) => {
+    setBroadcasts((prev) => prev.filter((b) => b.id !== bookingId));
+  };
+
+  const handleVerifyInlineOtp = async (bookingId: string) => {
+    if (!user || actionLoading) return;
+    const entered = (otpInputs[bookingId] || "").trim();
+    if (entered.length !== 4) {
+      setOtpErrors((prev) => ({
+        ...prev,
+        [bookingId]: "Please enter the 4-digit OTP provided by the customer.",
+      }));
+      return;
+    }
+
+    setActionLoading(bookingId);
+    setOtpErrors((prev) => ({ ...prev, [bookingId]: "" }));
+    setOtpSuccesses((prev) => ({ ...prev, [bookingId]: "" }));
+
+    const res = await verifyBookingOtp(bookingId, entered, user.uid);
+    if (res.error) {
+      setOtpErrors((prev) => ({ ...prev, [bookingId]: res.error || "Failed to verify OTP." }));
+    } else {
+      setOtpSuccesses((prev) => ({ ...prev, [bookingId]: "OTP Verified! Service is in progress." }));
+      setBookings((prev) =>
+        prev.map((b) => (b.id === bookingId ? { ...b, status: "in-progress" } : b))
+      );
+    }
+    setActionLoading(null);
   };
 
   const handleToggleAvailability = async () => {
@@ -666,7 +750,82 @@ export default function WorkerDashboard() {
             </motion.div>
           )}
 
-          {/* Incoming Bookings */}
+          {/* Incoming 5km Broadcast Requests (On-Demand Uber/Rapido style) */}
+          <motion.section
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.28 }}
+            className="mb-8"
+          >
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-xl font-bold text-text flex items-center gap-2">
+                <Radio className="w-5 h-5 text-primary animate-pulse" />
+                Nearby 5km Broadcast Requests (आस-पास के काम)
+                {broadcasts.length > 0 && (
+                  <Badge variant="primary">{broadcasts.length} Available</Badge>
+                )}
+              </h2>
+            </div>
+
+            {broadcasts.length === 0 ? (
+              <div className="bg-gradient-to-r from-primary/5 via-surface to-primary/5 rounded-2xl p-6 border border-primary/20 shadow-sm text-center">
+                <div className="w-12 h-12 mx-auto mb-2 rounded-full bg-primary/10 flex items-center justify-center text-primary">
+                  <Radio className="w-6 h-6 animate-pulse" />
+                </div>
+                <p className="font-semibold text-text text-sm">Listening for on-demand jobs within 5km radius</p>
+                <p className="text-xs text-text-muted mt-1 max-w-md mx-auto">
+                  When a customer requests on-demand services nearby, it will appear here instantly. Keep your availability Online.
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {broadcasts.map((b) => (
+                  <div
+                    key={b.id}
+                    className="bg-white dark:bg-slate-800 rounded-2xl p-5 border-2 border-primary/30 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4"
+                  >
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-1.5">
+                        <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping" />
+                        <Badge variant="success">Immediate On-Demand</Badge>
+                        <span className="text-xs text-text-muted">Within 5km</span>
+                      </div>
+                      <h4 className="font-bold text-base text-text">{b.service}</h4>
+                      <div className="flex flex-wrap items-center gap-3 text-xs text-text-muted mt-2">
+                        {b.customerName && <span>Customer: {b.customerName}</span>}
+                        {b.address && <span>📍 {b.address}</span>}
+                        {b.time && <span>⏰ {b.time}</span>}
+                        <span className="text-amber-600 dark:text-amber-400 font-semibold">
+                          💵 Customer pays direct cash/UPI post-job
+                        </span>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      <Button
+                        size="sm"
+                        variant="primary"
+                        onClick={() => handleAcceptBroadcast(b)}
+                        isLoading={actionLoading === b.id}
+                        leftIcon={<CheckCircle2 className="w-4 h-4" />}
+                      >
+                        Accept (स्वीकारें)
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => handleDeclineBroadcast(b.id)}
+                        disabled={actionLoading === b.id}
+                      >
+                        Decline
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </motion.section>
+
+          {/* Incoming Direct Bookings */}
           <motion.section
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
@@ -721,39 +880,109 @@ export default function WorkerDashboard() {
             )}
           </motion.section>
 
-          {/* Accepted Jobs */}
+          {/* Active & Accepted Jobs with OTP Verification */}
           <motion.section
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.35 }}
           >
             <div className="flex items-center justify-between mb-4">
-              <h2 className="text-xl font-bold text-text">Accepted Jobs</h2>
+              <h2 className="text-xl font-bold text-text">Active & Accepted Jobs</h2>
             </div>
-              {acceptedBookings.length === 0 ? (
-                <div className="bg-white dark:bg-slate-800 rounded-2xl p-8 border border-slate-200 dark:border-slate-700 shadow-sm text-center">
-                  <p className="text-text-muted mb-4">No accepted jobs yet.</p>
-                  <p className="text-sm text-text-secondary">Enable your availability to receive more bookings.</p>
-                </div>
-              ) : (
+            {acceptedBookings.length === 0 && inProgressBookings.length === 0 && confirmedBookings.length === 0 ? (
+              <div className="bg-white dark:bg-slate-800 rounded-2xl p-8 border border-slate-200 dark:border-slate-700 shadow-sm text-center">
+                <p className="text-text-muted mb-4">No active or accepted jobs right now.</p>
+                <p className="text-sm text-text-secondary">Enable your availability to receive more bookings.</p>
+              </div>
+            ) : (
               <div className="space-y-4">
-                {acceptedBookings.map((booking) => (
-                  <BookingCard
+                {[...acceptedBookings, ...confirmedBookings, ...inProgressBookings].map((booking) => (
+                  <div
                     key={booking.id}
-                    booking={booking}
-                    actions={
-                      <Button
-                        size="sm"
-                        onClick={() =>
-                          handleStatusUpdate(booking.id, "completed", booking.customerId)
-                        }
-                        isLoading={actionLoading === booking.id}
-                        leftIcon={<CheckCircle2 className="w-4 h-4" />}
-                      >
-                        Mark Complete
-                      </Button>
-                    }
-                  />
+                    className="bg-white dark:bg-slate-800 rounded-2xl p-5 border border-slate-200 dark:border-slate-700 shadow-sm space-y-3"
+                  >
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                      <div>
+                        <div className="flex items-center gap-2 mb-1">
+                          <h4 className="font-semibold text-text">{booking.service}</h4>
+                          <BookingStatusBadge status={booking.status} />
+                        </div>
+                        <div className="flex flex-wrap items-center gap-3 text-xs text-text-muted">
+                          {booking.customerName && <span>Customer: {booking.customerName}</span>}
+                          {booking.address && <span>📍 {booking.address}</span>}
+                          {booking.time && <span>⏰ {booking.time}</span>}
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2 flex-wrap">
+                        {booking.status === "in-progress" ? (
+                          <Button
+                            size="sm"
+                            variant="primary"
+                            onClick={() =>
+                              handleStatusUpdate(booking.id, "completed", booking.customerId)
+                            }
+                            isLoading={actionLoading === booking.id}
+                            leftIcon={<CheckCircle2 className="w-4 h-4" />}
+                          >
+                            Mark Complete
+                          </Button>
+                        ) : (
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <div className="flex items-center gap-1.5">
+                              <KeyRound className="w-4 h-4 text-primary flex-shrink-0" />
+                              <input
+                                type="text"
+                                inputMode="numeric"
+                                maxLength={4}
+                                placeholder="Customer OTP"
+                                value={otpInputs[booking.id] || ""}
+                                onChange={(e) =>
+                                  setOtpInputs((prev) => ({
+                                    ...prev,
+                                    [booking.id]: e.target.value.replace(/\D/g, "").slice(0, 4),
+                                  }))
+                                }
+                                className="w-32 text-center font-mono font-bold text-xs py-1.5 px-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-text"
+                              />
+                            </div>
+                            <Button
+                              size="sm"
+                              variant="primary"
+                              onClick={() => handleVerifyInlineOtp(booking.id)}
+                              isLoading={actionLoading === booking.id}
+                              disabled={
+                                actionLoading === booking.id ||
+                                (otpInputs[booking.id] || "").length !== 4
+                              }
+                            >
+                              Verify & Start
+                            </Button>
+                          </div>
+                        )}
+
+                        <Link href={`/bookings/${booking.id}`}>
+                          <Button size="sm" variant="outline" leftIcon={<ExternalLink className="w-3.5 h-3.5" />}>
+                            Details
+                          </Button>
+                        </Link>
+                      </div>
+                    </div>
+
+                    {otpErrors[booking.id] && (
+                      <p className="text-xs text-danger flex items-center gap-1">
+                        <AlertTriangle className="w-3.5 h-3.5" />
+                        {otpErrors[booking.id]}
+                      </p>
+                    )}
+
+                    {otpSuccesses[booking.id] && (
+                      <p className="text-xs text-success flex items-center gap-1">
+                        <CheckCircle2 className="w-3.5 h-3.5" />
+                        {otpSuccesses[booking.id]}
+                      </p>
+                    )}
+                  </div>
                 ))}
               </div>
             )}

@@ -55,6 +55,7 @@ export default function WorkerProfilePage() {
   const [unlockedPhone, setUnlockedPhone] = useState<string | null>(null);
   const [unlockedWhatsAppUrl, setUnlockedWhatsAppUrl] = useState<string | null>(null);
   const [contactPhase, setContactPhase] = useState<"idle" | "checking" | "free-confirm" | "unlocking" | "paid-confirm" | "paying" | "verifying" | "error">("idle");
+  const [isProcessing, setIsProcessing] = useState(false);
   const [freeRemaining, setFreeRemaining] = useState(0);
   const [contactError, setContactError] = useState<string | null>(null);
   const [showContactModal, setShowContactModal] = useState(false);
@@ -62,6 +63,8 @@ export default function WorkerProfilePage() {
   const [whatsAppFallback, setWhatsAppFallback] = useState<string | null>(null);
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
   const { unlockWithRazorpay, loading: isRazorpayLoading } = useRazorpayCheckout();
+
+  const userId = user?.uid;
 
   useEffect(() => {
     if (!id) {
@@ -92,8 +95,8 @@ export default function WorkerProfilePage() {
 
   useEffect(() => {
     const fetchUnlock = async () => {
-      if (!user || !id) return;
-      const { unlock: unlockRecord } = await getContactUnlock(user.uid, id);
+      if (!userId || !id) return;
+      const { unlock: unlockRecord } = await getContactUnlock(userId, id);
       if (unlockRecord) {
         setUnlock(unlockRecord);
         if (unlockRecord.workerPhone) {
@@ -102,7 +105,7 @@ export default function WorkerProfilePage() {
       }
     };
     fetchUnlock();
-  }, [user, id]);
+  }, [userId, id]);
 
   const handleToggleSave = async () => {
     if (!user || !worker || isSaving) return;
@@ -163,6 +166,7 @@ export default function WorkerProfilePage() {
   const resolvedPhone = isUnlocked ? (unlockedPhone || undefined) : undefined;
 
   const isContactProcessing =
+    isProcessing ||
     contactPhase === "checking" ||
     contactPhase === "unlocking" ||
     contactPhase === "paying" ||
@@ -297,35 +301,57 @@ export default function WorkerProfilePage() {
     }
   };
 
-  const handlePaidUnlock = async () => {
-    if (!user || !worker) return;
+  const handlePaidUnlock = async (e?: React.MouseEvent) => {
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+    if (isProcessing) return;
+    setIsProcessing(true);
+
+    if (!user || !worker) {
+      setIsProcessing(false);
+      return;
+    }
     setContactPhase("paying");
     setContactError(null);
 
-    await unlockWithRazorpay({
-      workerId: id,
-      workerName: worker.name,
-      onSuccess: async (data) => {
-        setUnlockedPhone(data.phoneNumber);
-        setUnlockedWhatsAppUrl(data.whatsappUrl);
-        const { unlock: updated } = await getContactUnlock(user.uid, id);
-        if (updated) setUnlock(updated);
-        setShowContactModal(false);
-        setContactPhase("idle");
+    try {
+      await unlockWithRazorpay({
+        workerId: id,
+        workerName: worker.name,
+        onSuccess: async (data) => {
+          setIsProcessing(false);
+          setUnlockedPhone(data.phoneNumber);
+          setUnlockedWhatsAppUrl(data.whatsappUrl);
+          const { unlock: updated } = await getContactUnlock(user.uid, id);
+          if (updated) setUnlock(updated);
+          setShowContactModal(false);
+          setContactPhase("idle");
 
-        if (pendingContactAction && data.phoneNumber) {
-          setTimeout(() => {
-            if (pendingContactAction === "call") openCall(data.phoneNumber);
-            else openWhatsApp(data.whatsappUrl || data.phoneNumber);
-            setPendingContactAction(null);
-          }, 100);
-        }
-      },
-      onError: (errMsg) => {
-        setContactPhase("error");
-        setContactError(errMsg);
-      },
-    });
+          if (pendingContactAction && data.phoneNumber) {
+            setTimeout(() => {
+              if (pendingContactAction === "call") openCall(data.phoneNumber);
+              else openWhatsApp(data.whatsappUrl || data.phoneNumber);
+              setPendingContactAction(null);
+            }, 100);
+          }
+        },
+        onError: (errMsg) => {
+          setIsProcessing(false);
+          setContactPhase("error");
+          setContactError(errMsg);
+        },
+        onDismiss: () => {
+          setIsProcessing(false);
+          setContactPhase("paid-confirm");
+        },
+      });
+    } catch {
+      setIsProcessing(false);
+      setContactPhase("error");
+      setContactError("Failed to initiate payment. Please try again.");
+    }
   };
 
   return (
@@ -620,6 +646,7 @@ export default function WorkerProfilePage() {
         onClose={() => {
           setShowContactModal(false);
           setContactPhase("idle");
+          setIsProcessing(false);
           setPendingContactAction(null);
         }}
         title="Unlock Contact"
@@ -633,10 +660,10 @@ export default function WorkerProfilePage() {
               Use 1 free access to contact this worker?
             </p>
             <div className="flex gap-3 justify-end">
-              <Button variant="ghost" onClick={() => { setShowContactModal(false); setContactPhase("idle"); setPendingContactAction(null); }}>
+              <Button type="button" variant="ghost" onClick={() => { setShowContactModal(false); setContactPhase("idle"); setIsProcessing(false); setPendingContactAction(null); }}>
                 Cancel
               </Button>
-              <Button variant="primary" onClick={handleFreeUnlock} isLoading={contactPhase === "unlocking"}>
+              <Button type="button" variant="primary" onClick={handleFreeUnlock} isLoading={contactPhase === "unlocking"}>
                 {contactPhase === "unlocking" ? "Unlocking..." : "Use Free Access"}
               </Button>
             </div>
@@ -650,22 +677,41 @@ export default function WorkerProfilePage() {
             <p className="text-text-secondary mb-6">
               Unlock <span className="font-bold text-text">{worker.name}</span>&apos;s contact for <span className="font-bold text-text">{formatCurrency(CONTACT_UNLOCK_PRICE)}</span>?
             </p>
+            {contactError && (
+              <div className="mb-4 p-3 rounded-xl bg-danger-50 dark:bg-danger-950/50 border border-danger/20 text-danger text-sm">
+                {contactError}
+              </div>
+            )}
             <div className="flex gap-3 justify-end">
-              <Button variant="ghost" onClick={() => { setShowContactModal(false); setContactPhase("idle"); setPendingContactAction(null); }}>
+              <Button type="button" variant="ghost" onClick={() => { setShowContactModal(false); setContactPhase("idle"); setIsProcessing(false); setPendingContactAction(null); }}>
                 Cancel
               </Button>
-              <Button variant="primary" onClick={handlePaidUnlock} isLoading={contactPhase === "paying" || contactPhase === "verifying"}>
-                {contactPhase === "paying" ? "Opening payment..." : contactPhase === "verifying" ? "Verifying..." : "Pay & Unlock"}
+              <Button
+                type="button"
+                variant="primary"
+                onClick={handlePaidUnlock}
+                disabled={isProcessing || contactPhase === "paying" || contactPhase === "verifying"}
+                isLoading={isProcessing || contactPhase === "paying" || contactPhase === "verifying"}
+              >
+                {isProcessing || contactPhase === "paying" || contactPhase === "verifying"
+                  ? "Processing..."
+                  : "Pay & Unlock"}
               </Button>
             </div>
           </>
         )}
         {contactPhase === "error" && contactError && (
           <>
-            <p className="text-danger mb-6">{contactError}</p>
-            <div className="flex justify-end">
-              <Button variant="primary" onClick={() => { setShowContactModal(false); setContactPhase("idle"); setContactError(null); setPendingContactAction(null); }}>
+            <div className="mb-6 p-3.5 rounded-xl bg-danger-50 dark:bg-danger-950/50 border border-danger/20 text-danger text-sm">
+              <p className="font-medium mb-1">Payment Failed</p>
+              <p className="text-xs text-danger/90">{contactError}</p>
+            </div>
+            <div className="flex gap-3 justify-end">
+              <Button type="button" variant="ghost" onClick={() => { setShowContactModal(false); setContactPhase("idle"); setContactError(null); setIsProcessing(false); setPendingContactAction(null); }}>
                 Close
+              </Button>
+              <Button type="button" variant="primary" onClick={() => { setContactPhase("paid-confirm"); setContactError(null); setIsProcessing(false); }}>
+                Try Again
               </Button>
             </div>
           </>

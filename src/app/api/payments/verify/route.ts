@@ -41,22 +41,23 @@ function formatWorkerContact(rawPhone: string): { phoneNumber: string; whatsappU
 
 export async function POST(request: NextRequest) {
   try {
+    const razorpayKeySecret = process.env.RAZORPAY_KEY_SECRET?.trim();
+    if (!razorpayKeySecret) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Payment gateway credentials not configured. Please set RAZORPAY_KEY_SECRET.",
+          message: "Payment gateway credentials not configured. Please set RAZORPAY_KEY_SECRET.",
+        },
+        { status: 500 }
+      );
+    }
+
     await initAdmin();
     if (!adminDb) {
       return NextResponse.json(
         { success: false, error: "Server database configuration error" },
         { status: 500 }
-      );
-    }
-
-    const razorpayKeySecret = process.env.RAZORPAY_KEY_SECRET;
-    if (!razorpayKeySecret) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: "Payment provider not configured. Set RAZORPAY_KEY_SECRET in your environment.",
-        },
-        { status: 503 }
       );
     }
 
@@ -218,7 +219,13 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const rawPhone = workerData?.personalInfo?.phone || workerData?.phone || "";
+    let rawPhone = workerData?.personalInfo?.phone || workerData?.phone || "";
+    if (!rawPhone) {
+      const privateSnap = await adminDb.collection("worker_private").doc(effectiveWorkerId).get();
+      if (privateSnap.exists) {
+        rawPhone = privateSnap.data()?.phoneNumber || "";
+      }
+    }
     const contact = formatWorkerContact(rawPhone);
 
     return NextResponse.json({

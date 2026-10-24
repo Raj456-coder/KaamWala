@@ -22,9 +22,11 @@ export const CATEGORIES: Category[] = [
   { id: "12", name: "Mason", slug: "mason", icon: "Layers", description: "Brick work, plastering, tiling", workerCount: 91, image: "/images/categories/mason.jpg" },
   { id: "13", name: "House Maid", slug: "house-maid", icon: "Home", description: "Cleaning, cooking, babysitting", workerCount: 210, image: "/images/categories/housemaid.jpg" },
   { id: "14", name: "Cook", slug: "cook", icon: "ChefHat", description: "Home cook, catering, tiffin", workerCount: 145, image: "/images/categories/cook.jpg" },
-  { id: "15", name: "Tutor", slug: "tutor", icon: "BookOpen", description: "Home tuition, exam prep", workerCount: 178, image: "/images/categories/tutor.jpg" },
-  { id: "16", name: "Photographer", slug: "photographer", icon: "Camera", description: "Event, wedding, portfolio", workerCount: 56, image: "/images/categories/photographer.jpg" },
-  { id: "17", name: "Internet Technician", slug: "internet-technician", icon: "Wifi", description: "WiFi setup, router, broadband", workerCount: 42, image: "/images/categories/internet-technician.jpg" },
+  { id: "15", name: "Babysitter", slug: "babysitter", icon: "Heart", description: "Infant, child care & nanny", workerCount: 88, image: "/images/categories/babysitter.jpg" },
+  { id: "16", name: "Bathroom Cleaner", slug: "bathroom-cleaner", icon: "Sparkles", description: "Deep toilet & bathroom sanitation", workerCount: 115, image: "/images/categories/cleaner.jpg" },
+  { id: "17", name: "Tutor", slug: "tutor", icon: "BookOpen", description: "Home tuition, exam prep", workerCount: 178, image: "/images/categories/tutor.jpg" },
+  { id: "18", name: "Photographer", slug: "photographer", icon: "Camera", description: "Event, wedding, portfolio", workerCount: 56, image: "/images/categories/photographer.jpg" },
+  { id: "19", name: "Internet Technician", slug: "internet-technician", icon: "Wifi", description: "WiFi setup, router, broadband", workerCount: 42, image: "/images/categories/internet-technician.jpg" },
 ];
 
 

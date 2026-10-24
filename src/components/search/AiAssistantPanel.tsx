@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   Mic,
   MicOff,
@@ -21,6 +21,7 @@ import Button from "@/components/ui/Button";
 import { trackSearchEvent } from "@/lib/analytics";
 import { useVoiceAssistant } from "@/hooks/useVoiceAssistant";
 import { ExtractedIntent, ClarificationOption, SessionContext } from "@/lib/ai/types";
+import { parseRegionalLanguageQuery, MultilingualParseResult } from "@/lib/ai/multilingualParser";
 
 interface AiAssistantPanelProps {
   query: string;
@@ -36,12 +37,12 @@ interface AiAssistantPanelProps {
 }
 
 const SAMPLE_PROMPTS = [
-  { label: "🔨 मुझे carpenter चाहिए", query: "mujhe carpenter chahiye" },
-  { label: "⚡ बिजली वाला Mathura me", query: "bijli wala Mathura me" },
-  { label: "🚰 Pipe leak plumber bhejo", query: "pipe leak ho gaya plumber bhejo" },
-  { label: "❄️ AC wala jo abhi aa sake", query: "AC wala chahiye jo abhi available ho" },
-  { label: "🧹 Kaamwali bai 500 ke andar", query: "kaamwali bai 500 ke andar" },
-  { label: "🧱 Mistri chahiye", query: "mistri chahiye" },
+  { label: "🔨 बढ़ई चाहिए (Carpenter)", query: "मुझे बढ़ई चाहिए दरवाजा ठीक करने के लिए" },
+  { label: "⚡ बिजली वाला (Electrician)", query: "bijli wala chahiye fan switch repair" },
+  { label: "🚰 প্লাম্বার দরকার (Plumber)", query: "বাড়ির জন্য প্লাম্বার নল মেরামত" },
+  { label: "🧹 வீட்டு வேலை ஆள் (Maid)", query: "வீட்டு வேலைக்கு ஆள் வேண்டும்" },
+  { label: "❄️ AC thanda nahi kar raha", query: "AC cooling nahi kar raha gas charging wala" },
+  { label: "🧱 राजमिस्त्री निर्माण (Mason)", query: "raj mistri chahiye tile aur deewar plaster" },
 ];
 
 export default function AiAssistantPanel({
@@ -59,11 +60,32 @@ export default function AiAssistantPanel({
   const [input, setInput] = useState(query);
   const [prevQuery, setPrevQuery] = useState(query);
   const [voiceLang, setVoiceLang] = useState<"hi-IN" | "en-IN">("hi-IN");
+  const [parsedRegional, setParsedRegional] = useState<MultilingualParseResult | null>(null);
 
   if (query !== prevQuery) {
     setPrevQuery(query);
     setInput(query);
   }
+
+  useEffect(() => {
+    let cancelled = false;
+    const runParse = async () => {
+      const trimmed = input.trim();
+      if (!trimmed) {
+        setParsedRegional(null);
+        return;
+      }
+      const res = await parseRegionalLanguageQuery(trimmed);
+      if (!cancelled) {
+        setParsedRegional(res);
+      }
+    };
+    const t = setTimeout(runParse, 200);
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
+  }, [input]);
 
   const {
     isListening,
@@ -85,7 +107,7 @@ export default function AiAssistantPanel({
     },
   });
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const trimmed = input.trim();
     if (!trimmed) return;
@@ -94,7 +116,15 @@ export default function AiAssistantPanel({
       event: "search_started",
       query: trimmed,
     });
-    onSearch(trimmed);
+
+    const parsed = await parseRegionalLanguageQuery(trimmed);
+    if (parsed.serviceDisplayName && parsed.detectedLanguage !== "en") {
+      onSearch(trimmed, {
+        lastCategory: parsed.serviceDisplayName,
+      });
+    } else {
+      onSearch(trimmed);
+    }
   };
 
   const handlePromptClick = (promptQuery: string) => {
@@ -231,6 +261,25 @@ export default function AiAssistantPanel({
             </Button>
           </div>
         </div>
+
+        {/* Real-time Regional Translation Indicator */}
+        {parsedRegional && parsedRegional.serviceTag && parsedRegional.detectedLanguage !== "en" && (
+          <div className="mt-2.5 flex items-center justify-between gap-2 text-xs bg-primary-50/80 dark:bg-primary-950/60 border border-primary/20 text-primary px-3.5 py-2 rounded-xl animate-fadeIn">
+            <div className="flex items-center gap-2">
+              <Globe className="w-3.5 h-3.5 flex-shrink-0 animate-spin" style={{ animationDuration: "10s" }} />
+              <span>
+                <strong>{parsedRegional.detectedLanguage.toUpperCase()} अनुवाद:</strong> &ldquo;{parsedRegional.originalQuery}&rdquo; &rarr; Standard Service:{" "}
+                <span className="font-bold underline text-primary-700 dark:text-primary-300">
+                  {parsedRegional.serviceDisplayName}
+                </span>{" "}
+                {parsedRegional.serviceHindiName && `(${parsedRegional.serviceHindiName})`}
+              </span>
+            </div>
+            <span className="text-[10px] font-semibold uppercase px-2 py-0.5 rounded-full bg-primary/10 text-primary">
+              Auto-Matched
+            </span>
+          </div>
+        )}
       </form>
 
       {/* Voice Listening Waveform & Interim Transcription */}

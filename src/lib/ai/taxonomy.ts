@@ -286,6 +286,37 @@ export const SERVICE_TAXONOMY: ServiceCategoryTaxonomy[] = [
       "wifi nahi chal raha", "net band hai", "router setup", "lan wire problem", "fiber cable repair", "slow internet"
     ],
     typicalSkills: ["Router Configuration", "Fiber Splicing", "LAN Cabling", "WiFi Optimization"],
+  },
+  {
+    id: "babysitter",
+    displayName: "Babysitter",
+    hindiName: "बेबीसिटर / आया",
+    hinglishName: "Babysitter / Aaya",
+    aliases: [
+      "babysitter", "baby sitter", "nanny", "aaya", "aayah", "child care", "infant care", "childcare",
+      "दाई", "आया", "बेबीसिटर", "बच्चों की देखभाल", "आया बाई"
+    ],
+    problemPhrases: [
+      "baby sitter chahiye", "bachhe ki dekhbhal", "aaya chahiye", "nanny for toddler", "infant care chahiye",
+      "chhote bachhe ke liye aaya", "bachhe ko sambhalne wali", "aaya bai chahiye"
+    ],
+    typicalSkills: ["Child Care", "Toddler Feeding", "Diaper Changing", "Playful Engagement", "Storytelling", "Safety Supervision"],
+  },
+  {
+    id: "bathroom-cleaner",
+    displayName: "Bathroom Cleaner",
+    hindiName: "बाथरूम क्लीनर",
+    hinglishName: "Bathroom Cleaner",
+    aliases: [
+      "bathroom cleaner", "toilet cleaner", "bathroom cleaning", "toilet cleaning", "washroom cleaner",
+      "washroom cleaning", "toilet safai", "bathroom safai",
+      "बाथरूम क्लीनर", "टॉयलेट क्लीनर", "शौचालय सफाई", "बाथरूम सफाई"
+    ],
+    problemPhrases: [
+      "bathroom saaf karwana hai", "toilet cleaning", "bathroom deep cleaning", "toilet seat cleaning",
+      "tiles scrubbing", "bathroom ki badboo", "latrine safai", "bathroom ganda hai"
+    ],
+    typicalSkills: ["Deep Toilet Sanitization", "Tile Descaling", "Stain Removal", "Tap & Fitting Shine", "Odor Removal"],
   }
 ];
 

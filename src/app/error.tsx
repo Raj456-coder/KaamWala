@@ -2,10 +2,9 @@
 
 import { useEffect } from "react";
 import Link from "next/link";
-import { motion } from "framer-motion";
-import { Home, RefreshCw, AlertOctagon } from "lucide-react";
+import { RefreshCw, Home, AlertOctagon } from "lucide-react";
 
-export default function GlobalError({
+export default function ErrorBoundary({
   error,
   reset,
 }: {
@@ -13,58 +12,38 @@ export default function GlobalError({
   reset: () => void;
 }) {
   useEffect(() => {
-    console.error(error);
+    console.error("Application error boundary caught error:", error);
   }, [error]);
 
   return (
-    <html>
-      <body className="min-h-screen bg-surface flex items-center justify-center">
-        <div className="text-center px-4 py-12">
-          <motion.div
-            initial={{ opacity: 0, y: -20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.5 }}
-            className="mb-8"
-          >
-            <div className="w-24 h-24 bg-danger-50 dark:bg-danger-950 rounded-3xl flex items-center justify-center mx-auto mb-6">
-              <AlertOctagon className="w-12 h-12 text-danger" />
-            </div>
-            <h1 className="text-4xl sm:text-5xl font-bold font-heading text-text mb-2">
-              Something went wrong
-            </h1>
-              <p className="text-text-secondary max-w-md mx-auto mb-6">
-              An unexpected error occurred. Don&apos;t worry, our team has been notified.
-            </p>
-          </motion.div>
-
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.5, delay: 0.2 }}
-            className="flex flex-col sm:flex-row gap-4 justify-center"
-          >
-            <motion.button
-              whileHover={{ scale: 1.05 }}
-              whileTap={{ scale: 0.95 }}
-              onClick={reset}
-              className="px-6 py-3 bg-primary hover:bg-primary-700 text-white rounded-xl font-medium flex items-center justify-center gap-2 transition-colors"
-            >
-              <RefreshCw className="w-4 h-4" />
-              Try Again
-            </motion.button>
-            <Link href="/">
-              <motion.button
-                whileHover={{ scale: 1.05 }}
-                whileTap={{ scale: 0.95 }}
-                className="px-6 py-3 bg-surface-dark dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl font-medium flex items-center justify-center gap-2 transition-colors"
-              >
-                <Home className="w-4 h-4 text-text-secondary" />
-                Back to Home
-              </motion.button>
-            </Link>
-          </motion.div>
+    <div className="min-h-[70vh] flex items-center justify-center px-4 py-16">
+      <div className="max-w-md w-full text-center">
+        <div className="w-20 h-20 bg-red-50 dark:bg-red-950/40 rounded-3xl flex items-center justify-center mx-auto mb-6 border border-red-200 dark:border-red-900/50 shadow-sm">
+          <AlertOctagon className="w-10 h-10 text-red-600 dark:text-red-400" />
         </div>
-      </body>
-    </html>
+        <h1 className="text-3xl font-bold font-heading text-text mb-3">
+          Something went wrong
+        </h1>
+        <p className="text-text-secondary text-sm mb-6 leading-relaxed">
+          We encountered an unexpected error while loading this page. Please try again or return to the home page.
+        </p>
+        <div className="flex flex-col sm:flex-row gap-3 justify-center">
+          <button
+            onClick={() => reset()}
+            className="px-5 py-2.5 bg-primary hover:bg-primary-700 text-white rounded-xl font-medium text-sm flex items-center justify-center gap-2 transition-all shadow-sm active:scale-95"
+          >
+            <RefreshCw className="w-4 h-4" />
+            Try Again
+          </button>
+          <Link
+            href="/"
+            className="px-5 py-2.5 bg-surface hover:bg-surface-alt border border-slate-200 dark:border-slate-700 rounded-xl font-medium text-sm flex items-center justify-center gap-2 transition-all text-text active:scale-95"
+          >
+            <Home className="w-4 h-4 text-text-secondary" />
+            Back to Home
+          </Link>
+        </div>
+      </div>
+    </div>
   );
 }

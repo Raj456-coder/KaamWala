@@ -54,11 +54,15 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
-    // Bookings: customer reads/writes their own; worker reads/writes their own; admin reads all
-    match /bookings/{bookingId} {
-      allow read: if isAuthenticated() && (resource.data.customerId == request.auth.uid || resource.data.workerId == request.auth.uid || isAdmin());
-      allow create: if isAuthenticated() && request.resource.data.customerId == request.auth.uid;
-      allow update, delete: if isAuthenticated() && (resource.data.customerId == request.auth.uid || resource.data.workerId == request.auth.uid || isAdmin());
+    // Bookings: allow authenticated users to read and write to the bookings collection
+    match /bookings/{document=**} {
+      allow read, write: if request.auth != null;
+    }
+
+    // Worker Schedules: slot availability and booking schedule locks
+    match /worker_schedules/{document=**} {
+      allow read: if true;
+      allow write: if request.auth != null;
     }
 
     // Booking reviews (subcollection) — participant readable, author creatable

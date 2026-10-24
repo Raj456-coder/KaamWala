@@ -7,7 +7,6 @@ import Image from "next/image";
 import {
   Menu,
   X,
-  Zap,
   LogIn,
   UserPlus,
   Moon,
@@ -28,6 +27,7 @@ import NotificationCenter from "@/components/notifications/NotificationCenter";
 
 const navLinks = [
   { href: "/", label: "Home" },
+  { href: "/services", label: "Services" },
   { href: "/categories", label: "Categories" },
   { href: "/search", label: "Find Workers" },
   { href: "/about", label: "About" },
@@ -101,12 +101,20 @@ export default function Navbar() {
     >
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between h-16 lg:h-20">
-          <Link href="/" className="flex items-center gap-2 group">
-            <div className="w-10 h-10 bg-primary rounded-xl flex items-center justify-center shadow-lg shadow-primary/25 group-hover:scale-110 transition-transform">
-              <Zap className="w-6 h-6 text-white" fill="white" />
+          <Link href="/" className="flex items-center gap-2.5 font-bold tracking-tight">
+            <div className="relative w-8 h-8 md:w-9 md:h-9 flex-shrink-0 flex items-center justify-center bg-transparent">
+              <Image
+                src="/logo.png?v=2"
+                alt="KaamWala Logo"
+                width={36}
+                height={36}
+                className="object-contain w-full h-full bg-transparent"
+                priority
+                unoptimized={true}
+              />
             </div>
-            <span className="text-2xl font-bold font-heading text-text">
-              Kaam<span className="text-primary">Wala</span>
+            <span className="text-xl md:text-2xl font-extrabold tracking-tight text-blue-600 dark:text-blue-400">
+              Kaam<span className="text-amber-500">Wala</span>
             </span>
           </Link>
 
@@ -206,17 +214,7 @@ export default function Navbar() {
             )}
             {user ? (
               <div className="flex items-center gap-3">
-                <Link
-                  href={
-                    role === "worker"
-                      ? "/worker-dashboard"
-                      : role === "admin"
-                      ? "/admin"
-                      : role === "customer"
-                      ? "/customer-dashboard"
-                      : "/role-select"
-                  }
-                >
+                <Link href="/dashboard" id="nav-dashboard-btn">
                   <Button
                     variant="primary"
                     size="sm"
@@ -226,23 +224,16 @@ export default function Navbar() {
                   </Button>
                 </Link>
                 <Link
-                  href={
-                    role === "worker"
-                      ? "/worker-dashboard"
-                      : role === "admin"
-                      ? "/admin"
-                      : role === "customer"
-                      ? "/customer-dashboard"
-                      : "/role-select"
-                  }
+                  href="/profile"
+                  id="nav-user-profile-btn"
                   className="flex items-center gap-2 p-1 pl-1 pr-2 rounded-full border border-slate-200 dark:border-slate-700 hover:border-primary/50 transition-colors"
-                  title={user.displayName || user.email || "Profile"}
+                  title={user?.displayName || user?.email || "Profile"}
                   aria-label="User profile"
                 >
-                  {user.photoURL ? (
+                  {user?.photoURL ? (
                     <Image
                       src={user.photoURL}
-                      alt={user.displayName || "Avatar"}
+                      alt={user?.displayName || "Avatar"}
                       width={28}
                       height={28}
                       className="w-7 h-7 rounded-full object-cover"
@@ -250,13 +241,16 @@ export default function Navbar() {
                     />
                   ) : (
                     <div className="w-7 h-7 rounded-full bg-primary/10 text-primary flex items-center justify-center font-bold text-xs uppercase">
-                      {user.displayName
+                      {user?.displayName
                         ? user.displayName.slice(0, 2)
-                        : user.email
+                        : user?.email
                         ? user.email.slice(0, 2)
                         : <User className="w-3.5 h-3.5" />}
                     </div>
                   )}
+                  <span className="text-sm font-medium text-text hidden sm:inline-block max-w-[130px] truncate">
+                    {user?.displayName || user?.email?.split("@")[0] || "Profile"}
+                  </span>
                   {role && (
                     <Badge variant={role === "worker" ? "primary" : "neutral"} size="sm">
                       {role.charAt(0).toUpperCase() + role.slice(1)}
@@ -403,11 +397,16 @@ export default function Navbar() {
                 <div className="flex flex-col gap-2 mt-4 pt-4 border-t border-slate-200 dark:border-slate-700">
                   {user ? (
                     <>
-                      <div className="flex items-center gap-3 p-3 bg-slate-50 dark:bg-slate-800/60 rounded-2xl mb-1">
-                        {user.photoURL ? (
+                      <Link
+                        href="/profile"
+                        onClick={() => setIsMobileMenuOpen(false)}
+                        className="flex items-center gap-3 p-3 bg-slate-50 dark:bg-slate-800/60 rounded-2xl mb-1 hover:bg-slate-100 dark:hover:bg-slate-850 transition-colors"
+                        id="mobile-nav-profile-btn"
+                      >
+                        {user?.photoURL ? (
                           <Image
                             src={user.photoURL}
-                            alt={user.displayName || "Avatar"}
+                            alt={user?.displayName || "Avatar"}
                             width={40}
                             height={40}
                             className="w-10 h-10 rounded-full object-cover"
@@ -415,18 +414,18 @@ export default function Navbar() {
                           />
                         ) : (
                           <div className="w-10 h-10 rounded-full bg-primary/10 text-primary flex items-center justify-center font-bold text-sm uppercase">
-                            {user.displayName
+                            {user?.displayName
                               ? user.displayName.slice(0, 2)
-                              : user.email
+                              : user?.email
                               ? user.email.slice(0, 2)
                               : <User className="w-5 h-5" />}
                           </div>
                         )}
                         <div className="flex-1 min-w-0">
                           <p className="text-sm font-semibold text-text truncate">
-                            {user.displayName || user.email?.split("@")[0] || "User"}
+                            {user?.displayName || user?.email?.split("@")[0] || "User"}
                           </p>
-                          {user.email && (
+                          {user?.email && (
                             <p className="text-xs text-text-muted truncate">{user.email}</p>
                           )}
                         </div>
@@ -435,19 +434,12 @@ export default function Navbar() {
                             {role.charAt(0).toUpperCase() + role.slice(1)}
                           </Badge>
                         )}
-                      </div>
+                      </Link>
                       <Link
-                        href={
-                          role === "worker"
-                            ? "/worker-dashboard"
-                            : role === "admin"
-                            ? "/admin"
-                            : role === "customer"
-                            ? "/customer-dashboard"
-                            : "/role-select"
-                        }
+                        href="/dashboard"
                         onClick={() => setIsMobileMenuOpen(false)}
                         className="w-full"
+                        id="mobile-nav-dashboard-btn"
                       >
                         <Button variant="primary" className="w-full justify-center" leftIcon={<LayoutDashboard className="w-4 h-4" />}>
                           Dashboard

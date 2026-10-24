@@ -10,9 +10,12 @@ interface StatusTimelineProps {
 }
 
 const STATUS_FLOW: Record<string, string[]> = {
+  pending: ["pending"],
+  confirmed: ["pending", "accepted"],
   accepted: ["pending", "accepted"],
   rejected: ["pending", "rejected"],
   cancelled: ["pending", "cancelled"],
+  "in-progress": ["pending", "accepted", "in-progress"],
   completed: ["pending", "accepted", "in-progress", "completed"],
 };
 

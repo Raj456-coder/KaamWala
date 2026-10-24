@@ -1,11 +1,13 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { Star, MapPin, Clock, Phone, MessageCircle, CheckCircle2, Languages, Heart } from "lucide-react";
+import { Star, MapPin, Clock, Phone, MessageCircle, CheckCircle2, Languages, Heart, Calendar, Zap } from "lucide-react";
 import { WorkerProfile } from "@/types";
 import Badge from "@/components/ui/Badge";
 import Button from "@/components/ui/Button";
 import Modal from "@/components/ui/Modal";
+import BookingWizardModal from "@/components/booking/BookingWizardModal";
+import { CATEGORIZED_SERVICES } from "@/lib/ai/multilingualParser";
 import { formatCurrency } from "@/lib/utils";
 import { useAuth } from "@/hooks/useAuth";
 import { useRouter } from "next/navigation";
@@ -13,7 +15,7 @@ import { saveWorker, removeSavedWorker } from "@/services/firestoreService";
 import { getContactUnlock, getCustomerFreeContactCount, requestContactUnlockApi } from "@/services/monetizationService";
 import { useRazorpayCheckout } from "@/hooks/useRazorpayCheckout";
 import { CONTACT_UNLOCK_PRICE, CUSTOMER_FREE_CONTACT_UNLOCKS } from "@/lib/launchConfig";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { cn } from "@/lib/utils";
 
 type ContactPhase = "idle" | "checking" | "free-confirm" | "unlocking" | "unlocked" | "paid-confirm" | "paying" | "verifying" | "error";
@@ -48,29 +50,45 @@ export default function WorkerCard({ worker, index = 0, onViewProfile }: WorkerC
   const [isSaved, setIsSaved] = useState(false);
 
   const [contactPhase, setContactPhase] = useState<ContactPhase>("idle");
+  const [isProcessing, setIsProcessing] = useState(false);
   const [freeRemaining, setFreeRemaining] = useState(0);
   const [contactError, setContactError] = useState<string | null>(null);
   const [workerPhone, setWorkerPhone] = useState<string | null>(null);
   const [showContactModal, setShowContactModal] = useState(false);
   const [pendingAction, setPendingAction] = useState<"call" | "whatsapp" | null>(null);
   const [whatsAppFallback, setWhatsAppFallback] = useState<string | null>(null);
+  const [isBookingModalOpen, setIsBookingModalOpen] = useState(false);
   const { unlockWithRazorpay, loading: isRazorpayLoading } = useRazorpayCheckout();
 
+  const matchedService = useMemo(() => {
+    const slug = (worker.categorySlug || "").toLowerCase();
+    const cat = (worker.category || "").toLowerCase();
+    return (
+      CATEGORIZED_SERVICES.find((s) => s.id === slug) ||
+      CATEGORIZED_SERVICES.find((s) => slug.includes(s.id) || s.id.includes(slug)) ||
+      CATEGORIZED_SERVICES.find((s) => s.name.toLowerCase().includes(cat) || cat.includes(s.name.toLowerCase())) ||
+      CATEGORIZED_SERVICES[0]
+    );
+  }, [worker.categorySlug, worker.category]);
+
   const isUnlocked = contactPhase === "unlocked";
-  const isProcessing =
+  const isContactBusy =
+    isProcessing ||
     contactPhase === "checking" ||
     contactPhase === "unlocking" ||
     contactPhase === "paying" ||
     contactPhase === "verifying" ||
     isRazorpayLoading;
 
+  const userId = user?.uid;
+
   useEffect(() => {
-    if (!user) return;
+    if (!userId) return;
     let mounted = true;
     const checkUnlock = async () => {
       const [unlockResult, countResult] = await Promise.all([
-        getContactUnlock(user.uid, worker.id),
-        getCustomerFreeContactCount(user.uid),
+        getContactUnlock(userId, worker.id),
+        getCustomerFreeContactCount(userId),
       ]);
       if (!mounted) return;
       if (unlockResult.unlock) {
@@ -87,7 +105,7 @@ export default function WorkerCard({ worker, index = 0, onViewProfile }: WorkerC
     return () => {
       mounted = false;
     };
-  }, [user, worker.id]);
+  }, [userId, worker.id]);
 
   const handleToggleSave = async (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -247,27 +265,49 @@ export default function WorkerCard({ worker, index = 0, onViewProfile }: WorkerC
     }
   };
 
-  const handlePaidUnlock = async () => {
-    if (!user) return;
+  const handlePaidUnlock = async (e?: React.MouseEvent) => {
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+    if (isProcessing) return;
+    setIsProcessing(true);
+
+    if (!user) {
+      setIsProcessing(false);
+      return;
+    }
     setContactPhase("paying");
     setContactError(null);
 
-    await unlockWithRazorpay({
-      workerId: worker.id,
-      workerName: worker.name,
-      onSuccess: (data) => {
-        setContactPhase("unlocked");
-        setWorkerPhone(data.phoneNumber);
-        setShowContactModal(false);
-        if (pendingAction && data.phoneNumber) {
-          setTimeout(() => triggerContact(pendingAction, data.phoneNumber), 0);
-        }
-      },
-      onError: (errMsg) => {
-        setContactPhase("error");
-        setContactError(errMsg);
-      },
-    });
+    try {
+      await unlockWithRazorpay({
+        workerId: worker.id,
+        workerName: worker.name,
+        onSuccess: (data) => {
+          setIsProcessing(false);
+          setContactPhase("unlocked");
+          setWorkerPhone(data.phoneNumber);
+          setShowContactModal(false);
+          if (pendingAction && data.phoneNumber) {
+            setTimeout(() => triggerContact(pendingAction, data.phoneNumber), 0);
+          }
+        },
+        onError: (errMsg) => {
+          setIsProcessing(false);
+          setContactPhase("error");
+          setContactError(errMsg);
+        },
+        onDismiss: () => {
+          setIsProcessing(false);
+          setContactPhase("paid-confirm");
+        },
+      });
+    } catch {
+      setIsProcessing(false);
+      setContactPhase("error");
+      setContactError("Failed to initiate payment. Please try again.");
+    }
   };
 
   const handleViewProfile = () => {
@@ -372,30 +412,45 @@ export default function WorkerCard({ worker, index = 0, onViewProfile }: WorkerC
           </div>
         </div>
 
-        <div className="mt-4 flex gap-2">
+        <div className="mt-4 space-y-2">
           <Button
-            variant="outline"
+            type="button"
+            variant="primary"
             size="sm"
-            className="flex-1"
-            leftIcon={<Phone className="w-4 h-4" />}
-            onClick={() => handleContactAction("call")}
-            disabled={isProcessing}
+            className="w-full font-bold shadow-md shadow-primary/20 bg-gradient-to-r from-primary to-accent hover:opacity-95 text-xs py-2.5"
+            leftIcon={<Calendar className="w-4 h-4" />}
+            onClick={() => setIsBookingModalOpen(true)}
           >
-            {contactPhase === "checking" ? "Checking..." : isUnlocked ? "Call Now" : "Call"}
+            Book {worker.name.split(" ")[0]} • ₹10 Booking
           </Button>
-          <Button
-            variant="secondary"
-            size="sm"
-            className="flex-1"
-            leftIcon={<MessageCircle className="w-4 h-4" />}
-            onClick={() => handleContactAction("whatsapp")}
-            disabled={isProcessing}
-          >
-            {contactPhase === "checking" ? "Checking..." : isUnlocked ? "WhatsApp" : "WhatsApp"}
-          </Button>
-          <Button variant="ghost" size="sm" className="flex-1" onClick={handleViewProfile}>
-            View Profile
-          </Button>
+
+          <div className="flex gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="flex-1 text-xs"
+              leftIcon={<Phone className="w-3.5 h-3.5" />}
+              onClick={() => handleContactAction("call")}
+              disabled={isContactBusy}
+            >
+              {contactPhase === "checking" ? "Checking..." : isUnlocked ? "Call Now" : "Call"}
+            </Button>
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              className="flex-1 text-xs"
+              leftIcon={<MessageCircle className="w-3.5 h-3.5" />}
+              onClick={() => handleContactAction("whatsapp")}
+              disabled={isContactBusy}
+            >
+              {contactPhase === "checking" ? "Checking..." : isUnlocked ? "WhatsApp" : "WhatsApp"}
+            </Button>
+            <Button type="button" variant="ghost" size="sm" className="flex-1 text-xs" onClick={handleViewProfile}>
+              Profile
+            </Button>
+          </div>
         </div>
 
         {isUnlocked && workerPhone && (
@@ -416,6 +471,7 @@ export default function WorkerCard({ worker, index = 0, onViewProfile }: WorkerC
           <div className="mt-2 p-2 rounded-xl bg-primary-50 dark:bg-primary-950 border border-primary/20">
             <p className="text-xs text-text-secondary mb-2">Popup blocked. Tap to continue to WhatsApp.</p>
             <Button
+              type="button"
               variant="primary"
               size="sm"
               onClick={() => {
@@ -433,6 +489,7 @@ export default function WorkerCard({ worker, index = 0, onViewProfile }: WorkerC
           onClose={() => {
             setShowContactModal(false);
             setContactPhase("idle");
+            setIsProcessing(false);
             setPendingAction(null);
           }}
           title="Unlock Contact"
@@ -446,10 +503,10 @@ export default function WorkerCard({ worker, index = 0, onViewProfile }: WorkerC
                 Use 1 free access to contact this worker?
               </p>
               <div className="flex gap-3 justify-end">
-                <Button variant="ghost" onClick={() => { setShowContactModal(false); setContactPhase("idle"); setPendingAction(null); }}>
+                <Button type="button" variant="ghost" onClick={() => { setShowContactModal(false); setContactPhase("idle"); setIsProcessing(false); setPendingAction(null); }}>
                   Cancel
                 </Button>
-                <Button variant="primary" onClick={handleFreeUnlock} isLoading={contactPhase === "unlocking"}>
+                <Button type="button" variant="primary" onClick={handleFreeUnlock} isLoading={contactPhase === "unlocking"}>
                   {contactPhase === "unlocking" ? "Unlocking..." : "Use Free Access"}
                 </Button>
               </div>
@@ -463,27 +520,55 @@ export default function WorkerCard({ worker, index = 0, onViewProfile }: WorkerC
               <p className="text-text-secondary mb-6">
                 Unlock <span className="font-bold text-text">{worker.name}</span>&apos;s contact for <span className="font-bold text-text">{formatCurrency(CONTACT_UNLOCK_PRICE)}</span>?
               </p>
+              {contactError && (
+                <div className="mb-4 p-3 rounded-xl bg-danger-50 dark:bg-danger-950/50 border border-danger/20 text-danger text-sm">
+                  {contactError}
+                </div>
+              )}
               <div className="flex gap-3 justify-end">
-                <Button variant="ghost" onClick={() => { setShowContactModal(false); setContactPhase("idle"); setPendingAction(null); }}>
+                <Button type="button" variant="ghost" onClick={() => { setShowContactModal(false); setContactPhase("idle"); setIsProcessing(false); setPendingAction(null); }}>
                   Cancel
                 </Button>
-                <Button variant="primary" onClick={handlePaidUnlock} isLoading={contactPhase === "paying" || contactPhase === "verifying"}>
-                  {contactPhase === "paying" ? "Opening payment..." : contactPhase === "verifying" ? "Verifying..." : "Pay & Unlock"}
+                <Button
+                  type="button"
+                  variant="primary"
+                  onClick={handlePaidUnlock}
+                  disabled={isProcessing || contactPhase === "paying" || contactPhase === "verifying"}
+                  isLoading={isProcessing || contactPhase === "paying" || contactPhase === "verifying"}
+                >
+                  {isProcessing || contactPhase === "paying" || contactPhase === "verifying"
+                    ? "Processing..."
+                    : "Pay & Unlock"}
                 </Button>
               </div>
             </>
           )}
           {contactPhase === "error" && (
             <>
-              <p className="text-danger mb-6">{contactError}</p>
-              <div className="flex justify-end">
-                <Button variant="primary" onClick={() => { setShowContactModal(false); setContactPhase("idle"); setContactError(null); setPendingAction(null); }}>
+              <div className="mb-6 p-3.5 rounded-xl bg-danger-50 dark:bg-danger-950/50 border border-danger/20 text-danger text-sm">
+                <p className="font-medium mb-1">Payment Failed</p>
+                <p className="text-xs text-danger/90">{contactError || "Something went wrong. Please try again."}</p>
+              </div>
+              <div className="flex gap-3 justify-end">
+                <Button type="button" variant="ghost" onClick={() => { setShowContactModal(false); setContactPhase("idle"); setContactError(null); setIsProcessing(false); setPendingAction(null); }}>
                   Close
+                </Button>
+                <Button type="button" variant="primary" onClick={() => { setContactPhase("paid-confirm"); setContactError(null); setIsProcessing(false); }}>
+                  Try Again
                 </Button>
               </div>
             </>
           )}
         </Modal>
+
+        <BookingWizardModal
+          isOpen={isBookingModalOpen}
+          onClose={() => setIsBookingModalOpen(false)}
+          preselectedService={matchedService}
+          preselectedWorkerId={worker.id}
+          preselectedWorkerName={worker.name}
+          preselectedWorkerImage={worker.image}
+        />
       </div>
     </motion.div>
   );

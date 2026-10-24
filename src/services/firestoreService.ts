@@ -20,6 +20,7 @@ import { WorkerDoc, CategoryDoc, CityDoc, CustomerDoc, AdminStats, FirestoreUser
 import { WorkerProfile, Review } from "@/types";
 import { slugify, sanitizeForFirestore } from "@/lib/utils";
 import { Coordinates, haversineDistance, formatDistance as formatDistanceKm } from "@/lib/location";
+import { getCategoryPricing } from "@/utils/pricingConfig";
 
 export interface FirestoreWorker extends WorkerDoc {
   id: string;
@@ -71,9 +72,13 @@ export function mapFirestoreWorkerToProfile(
     photoURL,
   } = worker;
 
-  const location = serviceArea
-    ? `${serviceArea.city}, ${serviceArea.state}`
-    : "Location not set";
+  const location = serviceArea?.area
+    ? `${serviceArea.area}, ${serviceArea.city}`
+    : serviceArea
+      ? `${serviceArea.city}, ${serviceArea.state}`
+      : (worker as any).location?.area
+        ? `${(worker as any).location.area}, ${(worker as any).location.city}`
+        : (worker as any).location?.city || "Location not set";
 
   let distance = "N/A";
   let distanceKm = Infinity;
@@ -88,7 +93,7 @@ export function mapFirestoreWorkerToProfile(
     distance = `${availability.serviceRadius} km`;
   }
 
-  const image = photoURL || documents?.profilePhoto?.url || "";
+  const image = photoURL || (worker as any).profilePic || documents?.profilePhoto?.url || "";
 
   const availabilityStr = availability
     ? `${availability.availableDays.join(", ") || "Not set"} · ${availability.workingHours.start} - ${availability.workingHours.end}`
@@ -99,17 +104,26 @@ export function mapFirestoreWorkerToProfile(
 
   const reviews: Review[] = [];
 
+  const categoryName = professionalInfo?.category || professionalInfo?.profession || (worker as any).category || "";
+  const standardPricing = getCategoryPricing(categoryName);
+  const hourlyRate = (professionalInfo?.hourlyRate && professionalInfo.hourlyRate > 0)
+    ? professionalInfo.hourlyRate
+    : ((worker as any).hourlyRate && (worker as any).hourlyRate > 0)
+      ? (worker as any).hourlyRate
+      : standardPricing.standardHourlyRate;
+  const minVisitCharge = professionalInfo?.minVisitCharge || (worker as any).minVisitCharge || standardPricing.minVisitCharge;
+
   const profile: WorkerProfile = {
     id,
     name: name || "",
-    category: professionalInfo?.category || professionalInfo?.profession || "",
-    categorySlug: slugify(professionalInfo?.category || professionalInfo?.profession || ""),
+    category: categoryName || standardPricing.name,
+    categorySlug: slugify(categoryName || standardPricing.id),
     rating: rating || 0,
     reviewCount: reviewCount || 0,
     experience: professionalInfo?.experience || 0,
     distance,
-    hourlyRate: professionalInfo?.hourlyRate || 0,
-    minVisitCharge: professionalInfo?.minVisitCharge,
+    hourlyRate,
+    minVisitCharge,
     isVerified: isVerified || false,
     isAvailable: isAvailable || false,
     image,
@@ -215,7 +229,7 @@ export async function getWorkerById(id: string): Promise<{ worker: WorkerWithId 
 export async function searchWorkers(
   params: SearchParams = {}
 ): Promise<{ workers: WorkerWithId[]; hasMore: boolean; lastDoc: QueryDocumentSnapshot | null; error: string | null }> {
-    if (!db) {
+  if (!db) {
     return { workers: [], hasMore: false, lastDoc: null, error: "Firestore is not available." };
   }
 
@@ -249,7 +263,13 @@ export async function searchWorkers(
       q = query(q, startAfter(params.cursor));
     }
 
-    const snapshot = await getDocs(q);
+    let snapshot;
+    try {
+      snapshot = await getDocs(q);
+    } catch (queryErr: unknown) {
+      console.warn("[searchWorkers] Query failed (index may be required), falling back to base collection query:", queryErr);
+      snapshot = await getDocs(query(collection(db, "workers"), limit(pageSize * 2)));
+    }
     const docs = snapshot.docs;
     const hasMore = docs.length > pageSize;
 
@@ -360,7 +380,13 @@ export async function searchNearbyWorkers(
       q = query(q, where("rating", ">=", params.minRating));
     }
 
-    const snapshot = await getDocs(q);
+    let snapshot;
+    try {
+      snapshot = await getDocs(q);
+    } catch (nearbyErr: unknown) {
+      console.warn("[searchNearbyWorkers] Query failed, falling back to base collection query:", nearbyErr);
+      snapshot = await getDocs(query(collection(db, "workers"), limit(100)));
+    }
     const workers: WorkerWithId[] = snapshot.docs
       .map((doc) => ({ id: doc.id, ...(doc.data() as WorkerDoc) }))
       .filter((w) => {
@@ -403,8 +429,8 @@ export async function searchNearbyWorkers(
       }
     });
 
-    const limit = params.limit || workers.length;
-    return { workers: workers.slice(0, limit), error: null };
+    const maxWorkers = params.limit || workers.length;
+    return { workers: workers.slice(0, maxWorkers), error: null };
   } catch (error: unknown) {
     return { workers: [], error: (error as Error).message || "Failed to find nearby workers." };
   }
